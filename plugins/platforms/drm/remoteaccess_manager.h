@@ -2,8 +2,7 @@
  KWin - the KDE window manager
  This file is part of the KDE project.
 
-Copyright 2017 Roman Gilg <subdiff@gmail.com>
-Copyright 2015 Martin Gräßlin <mgraesslin@kde.org>
+Copyright (C) 2016 Oleg Chernovskiy <kanedias@xaker.ru>
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -18,49 +17,44 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 *********************************************************************/
-#ifndef KWIN_DRM_BUFFER_GBM_H
-#define KWIN_DRM_BUFFER_GBM_H
+#ifndef REMOTEACCESSMANAGER_H
+#define REMOTEACCESSMANAGER_H
 
-#include "drm_buffer.h"
+#include "drm_backend.h"
+#include "../../../wayland_server.h"
+// KWayland
+#include <KWayland/Server/display.h>
+#include <KWayland/Server/remote_access_interface.h>
+// Qt
+#include <QObject>
 
-struct gbm_bo;
-struct gbm_surface;
+class gbm_bo;
+class gbm_surface;
 
 namespace KWin
 {
 
-class DrmBackend;
+using KWayland::Server::RemoteAccessManagerInterface;
+using KWayland::Server::BufferHandle;
 
-class DrmSurfaceBuffer : public DrmBuffer
+class RemoteAccessManager : public QObject
 {
+    Q_OBJECT
 public:
-    DrmSurfaceBuffer(DrmBackend *backend, gbm_surface *surface);
-    ~DrmSurfaceBuffer();
+    explicit RemoteAccessManager(QObject *parent = nullptr);
+    virtual ~RemoteAccessManager();
 
-    bool needsModeChange(DrmBuffer *b) const override {
-        if (DrmSurfaceBuffer *sb = dynamic_cast<DrmSurfaceBuffer*>(b)) {
-            return hasBo() != sb->hasBo();
-        } else {
-            return true;
-        }
-    }
+    void passBuffer(DrmBuffer *buffer);
 
-    bool hasBo() const {
-        return m_bo != nullptr;
-    }
-
-    gbm_bo* getBo() const {
-        return m_bo;
-    }
-
-    void releaseGbm() override;
+signals:
+    void bufferNoLongerNeeded(qint32 gbm_handle);
 
 private:
-    gbm_surface *m_surface = nullptr;
-    gbm_bo *m_bo = nullptr;
+    void releaseBuffer(const BufferHandle *buf);
+
+    RemoteAccessManagerInterface *m_interface = nullptr;
 };
 
-}
+} // KWin namespace
 
-#endif
-
+#endif // REMOTEACCESSMANAGER_H

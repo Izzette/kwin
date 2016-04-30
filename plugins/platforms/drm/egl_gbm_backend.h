@@ -20,6 +20,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #ifndef KWIN_EGL_GBM_BACKEND_H
 #define KWIN_EGL_GBM_BACKEND_H
 #include "abstract_egl_backend.h"
+#include "remoteaccess_manager.h"
 #include "scene_opengl.h"
 
 struct gbm_surface;
@@ -57,6 +58,7 @@ private:
     bool initializeEgl();
     bool initBufferConfigs();
     bool initRenderingContext();
+    void initRemotePresent();
     struct Output {
         DrmOutput *output = nullptr;
         DrmBuffer *buffer = nullptr;
@@ -74,6 +76,7 @@ private:
     void createOutput(DrmOutput *output);
     DrmBackend *m_backend;
     QVector<Output> m_outputs;
+    QScopedPointer<RemoteAccessManager> m_remoteaccessManager;
     friend class EglGbmTexture;
 };
 

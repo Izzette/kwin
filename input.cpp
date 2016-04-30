@@ -1531,6 +1531,12 @@ void InputRedirection::setupWorkspace()
                         m_pointer->processMotion(globalPointer() + QPointF(delta.width(), delta.height()), 0);
                     }
                 );
+                connect(device, &FakeInputDevice::pointerMotionAbsoluteRequested, this,
+                    [this] (const QPointF &pos) {
+                        // TODO: Fix time
+                        m_pointer->processMotion(pos, 0);
+                    }
+                );
                 connect(device, &FakeInputDevice::pointerButtonPressRequested, this,
                     [this] (quint32 button) {
                         // TODO: Fix time

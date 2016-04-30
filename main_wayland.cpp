@@ -712,6 +712,7 @@ int main(int argc, char * argv[])
     if (pluginName.isEmpty()) {
         std::cerr << "No backend specified through command line argument, trying auto resolution" << std::endl;
         pluginName = KWin::automaticBackendSelection();
+        std::cerr << "Selected backend " << pluginName.toStdString() << std::endl;
     }
 
     auto pluginIt = std::find_if(availablePlugins.begin(), availablePlugins.end(),

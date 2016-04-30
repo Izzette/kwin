@@ -61,9 +61,11 @@ public:
     bool needsModeChange(DrmBuffer *b) const override;
 
     bool map(QImage::Format format = QImage::Format_RGB32);
+
     quint32 handle() const {
         return m_handle;
     }
+
     QImage *image() const {
         return m_image;
     }
@@ -83,4 +85,3 @@ private:
 }
 
 #endif
-

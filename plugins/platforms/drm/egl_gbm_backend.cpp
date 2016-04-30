@@ -128,6 +128,7 @@ void EglGbmBackend::init()
     initKWinGL();
     initBufferAge();
     initWayland();
+    initRemotePresent();
 }
 
 bool EglGbmBackend::initRenderingContext()
@@ -150,6 +151,21 @@ bool EglGbmBackend::initRenderingContext()
     setSurface(m_outputs.first().eglSurface);
 
     return makeContextCurrent(m_outputs.first());
+}
+
+void EglGbmBackend::initRemotePresent()
+{
+    bool supportRemotePresent = false;
+    const QByteArray remoteOption = qgetenv("KWIN_REMOTE");
+
+    if (!remoteOption.isEmpty()) {
+        supportRemotePresent = remoteOption == QByteArrayLiteral("1");
+    }
+
+    if(supportRemotePresent) {
+        qCDebug(KWIN_DRM) << "Support for remote present enabled";
+        m_remoteaccessManager.reset(new RemoteAccessManager);
+    }
 }
 
 void EglGbmBackend::createOutput(DrmOutput *drmOutput)
@@ -241,7 +257,13 @@ void EglGbmBackend::presentOnOutput(EglGbmBackend::Output &o)
 {
     eglSwapBuffers(eglDisplay(), o.eglSurface);
     o.buffer = m_backend->createBuffer(o.gbmSurface);
+    if(m_remoteaccessManager && gbm_surface_has_free_buffers(o.gbmSurface)) {
+        // GBM surface is released on page flip so
+        // we should pass the buffer before it's presented
+        m_remoteaccessManager->passBuffer(o.buffer);
+    }
     m_backend->present(o.buffer, o.output);
+
     if (supportsBufferAge()) {
         eglQuerySurface(eglDisplay(), o.eglSurface, EGL_BUFFER_AGE_EXT, &o.bufferAge);
     }
