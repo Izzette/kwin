@@ -22,6 +22,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 // KConfigSkeleton
 #include "fallapartconfig.h"
 #include <assert.h>
+#include <time.h>
 #include <math.h>
 
 namespace KWin
@@ -44,6 +45,8 @@ void FallApartEffect::reconfigure(ReconfigureFlags)
 {
     FallApartConfig::self()->read();
     blockSize = FallApartConfig::blockSize();
+    seedStart = time(NULL);
+    totalWindowsSeen = 0;
 }
 
 void FallApartEffect::prePaintScreen(ScreenPrePaintData& data, int time)
@@ -56,8 +59,8 @@ void FallApartEffect::prePaintScreen(ScreenPrePaintData& data, int time)
 void FallApartEffect::prePaintWindow(EffectWindow* w, WindowPrePaintData& data, int time)
 {
     if (windows.contains(w) && isRealWindow(w)) {
-        if (windows[ w ] < 1) {
-            windows[ w ] += time / animationTime(1000.);
+        if (windows[ w ].time < 1) {
+            windows[ w ].time += time / animationTime(1000.);
             data.setTransformed();
             w->enablePainting(EffectWindow::PAINT_DISABLED_BY_DELETE);
             // Request the window to be divided into cells
@@ -73,26 +76,27 @@ void FallApartEffect::prePaintWindow(EffectWindow* w, WindowPrePaintData& data, 
 void FallApartEffect::paintWindow(EffectWindow* w, int mask, QRegion region, WindowPaintData& data)
 {
     if (windows.contains(w) && isRealWindow(w)) {
+        // change direction randomly but consistently
+        unsigned int windowSeed = windows[ w ].seed;
+
         WindowQuadList new_quads;
-        int cnt = 0;
         foreach (WindowQuad quad, data.quads) { // krazy:exclude=foreach
             // make fragments move in various directions, based on where
             // they are (left pieces generally move to the left, etc.)
             QPointF p1(quad[ 0 ].x(), quad[ 0 ].y());
             double xdiff = 0;
             if (p1.x() < w->width() / 2)
-                xdiff = -(w->width() / 2 - p1.x()) / w->width() * 100;
+                xdiff = -(w->width() / 2 - p1.x()) / w->width() * 10;
             if (p1.x() > w->width() / 2)
-                xdiff = (p1.x() - w->width() / 2) / w->width() * 100;
+                xdiff = (p1.x() - w->width() / 2) / w->width() * 10;
             double ydiff = 0;
             if (p1.y() < w->height() / 2)
-                ydiff = -(w->height() / 2 - p1.y()) / w->height() * 100;
+                ydiff = -(w->height() / 2 - p1.y()) / w->height() * 10 + pow(1.07, windows[ w ].time * 50);
             if (p1.y() > w->height() / 2)
-                ydiff = (p1.y() - w->height() / 2) / w->height() * 100;
-            double modif = windows[ w ] * windows[ w ] * 64;
-            srandom(cnt);   // change direction randomly but consistently
-            xdiff += (rand() % 21 - 10);
-            ydiff += (rand() % 21 - 10);
+                ydiff = (p1.y() - w->height() / 2) / w->height() * 10 + pow(1.07, windows[ w ].time * 50);
+            double modif = windows[ w ].time * windows[ w ].time * 64;
+            xdiff += rand_r(&windowSeed) % 11 - 5;
+            ydiff += rand_r(&windowSeed) % 21 - 5;
             for (int j = 0;
                     j < 4;
                     ++j) {
@@ -101,21 +105,20 @@ void FallApartEffect::paintWindow(EffectWindow* w, int mask, QRegion region, Win
             // also make the fragments rotate around their center
             QPointF center((quad[ 0 ].x() + quad[ 1 ].x() + quad[ 2 ].x() + quad[ 3 ].x()) / 4,
                            (quad[ 0 ].y() + quad[ 1 ].y() + quad[ 2 ].y() + quad[ 3 ].y()) / 4);
-            double adiff = (rand() % 720 - 360) / 360. * 2 * M_PI;   // spin randomly
+            double adiff = (rand_r(&windowSeed) % 720 - 360) / 360. * 2 * M_PI;   // spin randomly
             for (int j = 0;
                     j < 4;
                     ++j) {
                 double x = quad[ j ].x() - center.x();
                 double y = quad[ j ].y() - center.y();
                 double angle = atan2(y, x);
-                angle += windows[ w ] * adiff;
+                angle += windows[ w ].time * adiff;
                 double dist = sqrt(x * x + y * y);
                 x = dist * cos(angle);
                 y = dist * sin(angle);
                 quad[ j ].move(center.x() + x, center.y() + y);
             }
             new_quads.append(quad);
-            ++cnt;
         }
         data.quads = new_quads;
     }
@@ -143,9 +146,7 @@ bool FallApartEffect::isRealWindow(EffectWindow* w)
     qCDebug(KWINEFFECTS) << "Splash:" << w->isSplash();
     qCDebug(KWINEFFECTS) << "Normal:" << w->isNormalWindow();
     */
-    if (!w->isNormalWindow())
-        return false;
-    return true;
+    return w->isNormalWindow();
 }
 
 void FallApartEffect::slotWindowClosed(EffectWindow* c)
@@ -157,7 +158,8 @@ void FallApartEffect::slotWindowClosed(EffectWindow* c)
     const void* e = c->data(WindowClosedGrabRole).value<void*>();
     if (e && e != this)
         return;
-    windows[ c ] = 0;
+    windows[ c ].time = 0;
+    windows[ c ].seed = seedStart + totalWindowsSeen++;
     c->refWindow();
 }
 

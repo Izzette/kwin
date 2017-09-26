@@ -23,6 +23,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include <kwineffects.h>
 
+struct FallApartEffectWindowInfo {
+    double time;
+    unsigned int seed;
+};
+
 namespace KWin
 {
 
@@ -56,9 +61,11 @@ public Q_SLOTS:
     void slotWindowDeleted(KWin::EffectWindow *w);
 
 private:
-    QHash< const EffectWindow*, double > windows;
+    QHash< const EffectWindow*, struct FallApartEffectWindowInfo > windows;
     bool isRealWindow(EffectWindow* w);
     int blockSize;
+    unsigned int seedStart;
+    unsigned int totalWindowsSeen;
 };
 
 } // namespace
