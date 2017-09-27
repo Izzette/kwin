@@ -58,8 +58,8 @@ void FallApartEffect::prePaintScreen(ScreenPrePaintData& data, int time)
 
 void FallApartEffect::prePaintWindow(EffectWindow* w, WindowPrePaintData& data, int time)
 {
-    if (windows.contains(w) && isRealWindow(w)) {
-        if (windows[ w ].time < 1) {
+    if (windows.contains(w)) {
+        if (isRealWindow(w) && windows[ w ].time < 1) {
             windows[ w ].time += time / animationTime(1000.);
             data.setTransformed();
             w->enablePainting(EffectWindow::PAINT_DISABLED_BY_DELETE);
@@ -70,6 +70,7 @@ void FallApartEffect::prePaintWindow(EffectWindow* w, WindowPrePaintData& data, 
             w->unrefWindow();
         }
     }
+
     effects->prePaintWindow(w, data, time);
 }
 
@@ -134,19 +135,16 @@ void FallApartEffect::postPaintScreen()
 
 bool FallApartEffect::isRealWindow(EffectWindow* w)
 {
-    // TODO: isSpecialWindow is rather generic, maybe tell windowtypes separately?
-    /*
-    qCDebug(KWINEFFECTS) << "--" << w->caption() << "--------------------------------";
-    qCDebug(KWINEFFECTS) << "Tooltip:" << w->isTooltip();
-    qCDebug(KWINEFFECTS) << "Toolbar:" << w->isToolbar();
-    qCDebug(KWINEFFECTS) << "Desktop:" << w->isDesktop();
-    qCDebug(KWINEFFECTS) << "Special:" << w->isSpecialWindow();
-    qCDebug(KWINEFFECTS) << "TopMenu:" << w->isTopMenu();
-    qCDebug(KWINEFFECTS) << "Notific:" << w->isNotification();
-    qCDebug(KWINEFFECTS) << "Splash:" << w->isSplash();
-    qCDebug(KWINEFFECTS) << "Normal:" << w->isNormalWindow();
-    */
-    return w->isNormalWindow();
+    if (effects->activeFullScreenEffect())
+      return false;
+    if (!w->isVisible())
+        return false;
+    if (w->hasDecoration())
+        return true;
+    if (!w->isManaged() || w->isMenu() ||  w->isNotification() || w->isDesktop() ||
+            w->isDock() ||  w->isSplash() || w->isToolbar())
+        return false;
+    return true;
 }
 
 void FallApartEffect::slotWindowClosed(EffectWindow* c)
