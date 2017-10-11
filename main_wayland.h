@@ -61,8 +61,10 @@ private:
     void createBackend();
     void createX11Connection();
     void continueStartupWithScreens();
+    void continueStartupWithSceen();
     void continueStartupWithX();
     void startXwaylandServer();
+    void startSession();
 
     bool m_startXWayland = false;
     int m_xcbConnectionFd = -1;

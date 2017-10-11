@@ -494,6 +494,7 @@ Q_SIGNALS:
 
 private:
     void init();
+    void initWithX11();
     void initShortcuts();
     template <typename Slot>
     void initShortcut(const QString &actionName, const QString &description, const QKeySequence &shortcut,
@@ -526,7 +527,7 @@ private:
     void closeActivePopup();
     void updateClientArea(bool force);
     void resetClientAreas(uint desktopCount);
-    void updateClientVisibilityOnDesktopChange(uint oldDesktop, uint newDesktop);
+    void updateClientVisibilityOnDesktopChange(uint newDesktop);
     void activateClientOnNewDesktop(uint desktop);
     AbstractClient *findClientToActivateOnDesktop(uint desktop);
 
@@ -565,6 +566,7 @@ private:
     bool force_restacking;
     ToplevelList x_stacking; // From XQueryTree()
     std::unique_ptr<Xcb::Tree> m_xStackingQueryTree;
+    bool m_xStackingDirty = false;
     QList<AbstractClient*> should_get_focus; // Last is most recent
     QList<AbstractClient*> attention_chain;
 

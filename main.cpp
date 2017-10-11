@@ -131,7 +131,7 @@ void Application::setOperationMode(OperationMode mode)
 
 bool Application::shouldUseWaylandForCompositing() const
 {
-    return m_operationMode == OperationModeWaylandAndX11 || m_operationMode == OperationModeXwayland;
+    return m_operationMode == OperationModeWaylandOnly || m_operationMode == OperationModeXwayland;
 }
 
 void Application::start()
@@ -268,9 +268,6 @@ void Application::notifyKSplash()
 
 void Application::createWorkspace()
 {
-    // ensure the helper atoms are retrieved before we create the Workspace
-    atoms->retrieveHelpers();
-
     // we want all QQuickWindows with an alpha buffer, do here as Workspace might create QQuickWindows
     QQuickWindow::setDefaultAlphaBuffer(true);
 

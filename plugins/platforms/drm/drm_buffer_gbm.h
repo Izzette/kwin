@@ -23,18 +23,20 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "drm_buffer.h"
 
+#include <memory>
+
 struct gbm_bo;
-struct gbm_surface;
 
 namespace KWin
 {
 
 class DrmBackend;
+class GbmSurface;
 
 class DrmSurfaceBuffer : public DrmBuffer
 {
 public:
-    DrmSurfaceBuffer(DrmBackend *backend, gbm_surface *surface);
+    DrmSurfaceBuffer(DrmBackend *backend, const std::shared_ptr<GbmSurface> &surface);
     ~DrmSurfaceBuffer();
 
     bool needsModeChange(DrmBuffer *b) const override {
@@ -51,7 +53,7 @@ public:
     void releaseGbm() override;
 
 private:
-    gbm_surface *m_surface = nullptr;
+    std::shared_ptr<GbmSurface> m_surface;
     gbm_bo *m_bo = nullptr;
 };
 

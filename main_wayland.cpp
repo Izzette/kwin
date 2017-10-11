@@ -63,6 +63,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <sys/procctl.h>
 #endif
 
+#if HAVE_LIBCAP
+#include <sys/capability.h>
+#endif
+
+#include <sched.h>
+
 #include <iostream>
 #include <iomanip>
 
@@ -81,7 +87,7 @@ static void readDisplay(int pipe);
 //************************************
 
 ApplicationWayland::ApplicationWayland(int &argc, char **argv)
-    : Application(OperationModeWaylandAndX11, argc, argv)
+    : Application(OperationModeWaylandOnly, argc, argv)
 {
 }
 
@@ -124,7 +130,9 @@ ApplicationWayland::~ApplicationWayland()
 
 void ApplicationWayland::performStartup()
 {
-    setOperationMode(m_startXWayland ? OperationModeXwayland : OperationModeWaylandAndX11);
+    if (m_startXWayland) {
+        setOperationMode(OperationModeXwayland);
+    }
     // first load options - done internally by a different thread
     createOptions();
     waylandServer()->createInternalConnection();
@@ -152,12 +160,21 @@ void ApplicationWayland::continueStartupWithScreens()
     disconnect(kwinApp()->platform(), &Platform::screensQueried, this, &ApplicationWayland::continueStartupWithScreens);
     createScreens();
 
-    if (!m_startXWayland) {
-        continueStartupWithX();
+    if (operationMode() == OperationModeWaylandOnly) {
+        createCompositor();
+        connect(Compositor::self(), &Compositor::sceneCreated, this, &ApplicationWayland::continueStartupWithSceen);
         return;
     }
     createCompositor();
     connect(Compositor::self(), &Compositor::sceneCreated, this, &ApplicationWayland::startXwaylandServer);
+}
+
+void ApplicationWayland::continueStartupWithSceen()
+{
+    disconnect(Compositor::self(), &Compositor::sceneCreated, this, &ApplicationWayland::continueStartupWithSceen);
+    startSession();
+    createWorkspace();
+    notifyKSplash();
 }
 
 void ApplicationWayland::continueStartupWithX()
@@ -208,6 +225,18 @@ void ApplicationWayland::continueStartupWithX()
         ::exit(1);
     }
 
+    m_environment.insert(QStringLiteral("DISPLAY"), QString::fromUtf8(qgetenv("DISPLAY")));
+
+    startSession();
+    createWorkspace();
+
+    Xcb::sync(); // Trigger possible errors, there's still a chance to abort
+
+    notifyKSplash();
+}
+
+void ApplicationWayland::startSession()
+{
     if (!m_inputMethodServerToStart.isEmpty()) {
         int socket = dup(waylandServer()->createInputMethodConnection());
         if (socket >= 0) {
@@ -233,7 +262,6 @@ void ApplicationWayland::continueStartupWithX()
         }
     }
 
-    m_environment.insert(QStringLiteral("DISPLAY"), QString::fromUtf8(qgetenv("DISPLAY")));
     // start session
     if (!m_sessionArgument.isEmpty()) {
         QProcess *p = new Process(this);
@@ -254,12 +282,6 @@ void ApplicationWayland::continueStartupWithX()
             p->start(application);
         }
     }
-
-    createWorkspace();
-
-    Xcb::sync(); // Trigger possible errors, there's still a chance to abort
-
-    notifyKSplash();
 }
 
 void ApplicationWayland::createX11Connection()
@@ -438,6 +460,37 @@ static void unsetDumpable(int sig)
     return;
 }
 
+void gainRealTime()
+{
+#if HAVE_SCHED_RESET_ON_FORK
+    const int minPriority = sched_get_priority_min(SCHED_RR);
+    struct sched_param sp;
+    sp.sched_priority = minPriority;
+    sched_setscheduler(0, SCHED_RR | SCHED_RESET_ON_FORK, &sp);
+#endif
+}
+
+void dropNiceCapability()
+{
+#if HAVE_LIBCAP
+    cap_t caps = cap_get_proc();
+    if (!caps) {
+        return;
+    }
+    cap_value_t capList[] = { CAP_SYS_NICE };
+    if (cap_set_flag(caps, CAP_PERMITTED, 1, capList, CAP_CLEAR) == -1) {
+        cap_free(caps);
+        return;
+    }
+    if (cap_set_flag(caps, CAP_EFFECTIVE, 1, capList, CAP_CLEAR) == -1) {
+        cap_free(caps);
+        return;
+    }
+    cap_set_proc(caps);
+    cap_free(caps);
+#endif
+}
+
 } // namespace
 
 int main(int argc, char * argv[])
@@ -445,6 +498,8 @@ int main(int argc, char * argv[])
     KWin::disablePtrace();
     KWin::Application::setupMalloc();
     KWin::Application::setupLocalizedString();
+    KWin::gainRealTime();
+    KWin::dropNiceCapability();
 
     if (signal(SIGTERM, KWin::sighandler) == SIG_IGN)
         signal(SIGTERM, SIG_IGN);

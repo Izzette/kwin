@@ -20,7 +20,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #ifndef KWIN_EGL_GBM_BACKEND_H
 #define KWIN_EGL_GBM_BACKEND_H
 #include "abstract_egl_backend.h"
-#include "scene_opengl.h"
+
+#include <memory>
 
 struct gbm_surface;
 
@@ -29,6 +30,7 @@ namespace KWin
 class DrmBackend;
 class DrmBuffer;
 class DrmOutput;
+class GbmSurface;
 
 /**
  * @brief OpenGL Backend using Egl on a GBM surface.
@@ -40,7 +42,7 @@ public:
     EglGbmBackend(DrmBackend *b);
     virtual ~EglGbmBackend();
     void screenGeometryChanged(const QSize &size) override;
-    SceneOpenGL::TexturePrivate *createBackendTexture(SceneOpenGL::Texture *texture) override;
+    SceneOpenGLTexturePrivate *createBackendTexture(SceneOpenGLTexture *texture) override;
     QRegion prepareRenderingFrame() override;
     void endRenderingFrame(const QRegion &renderedRegion, const QRegion &damagedRegion) override;
     void endRenderingFrameForScreen(int screenId, const QRegion &damage, const QRegion &damagedRegion) override;
@@ -60,7 +62,7 @@ private:
     struct Output {
         DrmOutput *output = nullptr;
         DrmBuffer *buffer = nullptr;
-        gbm_surface *gbmSurface = nullptr;
+        std::shared_ptr<GbmSurface> gbmSurface;
         EGLSurface eglSurface = EGL_NO_SURFACE;
         int bufferAge = 0;
         /**
@@ -87,7 +89,7 @@ public:
 
 private:
     friend class EglGbmBackend;
-    EglGbmTexture(SceneOpenGL::Texture *texture, EglGbmBackend *backend);
+    EglGbmTexture(SceneOpenGLTexture *texture, EglGbmBackend *backend);
 };
 
 } // namespace

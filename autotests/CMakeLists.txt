@@ -167,6 +167,7 @@ add_executable( testScriptedEffectLoader ${testScriptedEffectLoader_SRCS})
 
 target_link_libraries(testScriptedEffectLoader
     Qt5::Concurrent
+    Qt5::Qml
     Qt5::Script
     Qt5::Test
     Qt5::X11Extras
@@ -403,3 +404,10 @@ target_link_libraries(testXkb
 )
 add_test(kwin-testXkb testXkb)
 ecm_mark_as_test(testXkb)
+
+if(HAVE_GBM)
+    add_executable(testGbmSurface test_gbm_surface.cpp ../plugins/platforms/drm/gbm_surface.cpp)
+    target_link_libraries(testGbmSurface Qt5::Test)
+    add_test(kwin-testGbmSurface testGbmSurface)
+    ecm_mark_as_test(testGbmSurface)
+endif()

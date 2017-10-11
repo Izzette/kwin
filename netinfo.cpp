@@ -23,6 +23,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "netinfo.h"
 // kwin
 #include "client.h"
+#include "rootinfo_filter.h"
 #include "virtualdesktops.h"
 #include "workspace.h"
 // Qt
@@ -128,7 +129,9 @@ RootInfo *RootInfo::create()
 
 void RootInfo::destroy()
 {
-    Q_ASSERT(s_self);
+    if (!s_self) {
+        return;
+    }
     xcb_window_t supportWindow = s_self->supportWindow();
     delete s_self;
     s_self = NULL;
@@ -139,6 +142,7 @@ RootInfo::RootInfo(xcb_window_t w, const char *name, NET::Properties properties,
                    NET::States states, NET::Properties2 properties2, NET::Actions actions, int scr)
     : NETRootInfo(connection(), w, name, properties, types, states, properties2, actions, scr)
     , m_activeWindow(activeWindow())
+    , m_eventFilter(std::make_unique<RootInfoFilter>(this))
 {
 }
 

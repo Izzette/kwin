@@ -24,11 +24,14 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define KWIN_GLTEXTURE_P_H
 
 #include "kwinconfig.h" // KWIN_HAVE_OPENGL
+#include "kwinglutils.h"
 #include <kwinglutils_export.h>
 
 #include <QSize>
 #include <QSharedData>
 #include <QImage>
+#include <QMatrix4x4>
+#include <epoxy/gl.h>
 
 namespace KWin
 {

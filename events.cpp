@@ -247,16 +247,6 @@ bool Workspace::workspaceEvent(xcb_generic_event_t *e)
             && (eventType == XCB_KEY_PRESS || eventType == XCB_KEY_RELEASE))
         return false; // let Qt process it, it'll be intercepted again in eventFilter()
 
-    if (eventType == XCB_PROPERTY_NOTIFY || eventType == XCB_CLIENT_MESSAGE) {
-        NET::Properties dirtyProtocols;
-        NET::Properties2 dirtyProtocols2;
-        rootInfo()->event(e, &dirtyProtocols, &dirtyProtocols2);
-        if (dirtyProtocols & NET::DesktopNames)
-            VirtualDesktopManager::self()->save();
-        if (dirtyProtocols2 & NET::WM2DesktopLayout)
-            VirtualDesktopManager::self()->updateLayout();
-    }
-
     // events that should be handled before Clients can get them
     switch (eventType) {
     case XCB_CONFIGURE_NOTIFY:
@@ -401,8 +391,6 @@ bool Workspace::workspaceEvent(xcb_generic_event_t *e)
                 c->syncEvent(reinterpret_cast< xcb_sync_alarm_notify_event_t* >(e));
             for (Client *c : desktops)
                 c->syncEvent(reinterpret_cast< xcb_sync_alarm_notify_event_t* >(e));
-        } else if (eventType == Xcb::Extensions::self()->fixesCursorNotifyEvent() && Xcb::Extensions::self()->isFixesAvailable()) {
-            Cursor::self()->notifyCursorChanged(reinterpret_cast<xcb_xfixes_cursor_notify_event_t*>(e)->cursor_serial);
         }
         break;
     }

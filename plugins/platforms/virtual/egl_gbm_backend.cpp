@@ -29,6 +29,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <logging.h>
 // kwin libs
 #include <kwinglplatform.h>
+#include <kwinglutils.h>
 // Qt
 #include <QOpenGLContext>
 // system
@@ -67,11 +68,11 @@ void EglGbmBackend::initGbmDevice()
         return;
     }
     QScopedPointer<Udev> udev(new Udev);
-    UdevDevice::Ptr device = udev->renderNode();
+    UdevDevice::Ptr device = udev->virtualGpu();
     if (!device) {
-        // if we don't have a render node, try to find a virtual (vgem) device
-        qCDebug(KWIN_VIRTUAL) << "No render node, looking for a vgem device";
-        device = udev->virtualGpu();
+        // if we don't have a virtual (vgem) device, try to find a render node
+        qCDebug(KWIN_VIRTUAL) << "No vgem device, looking for a render node";
+        device = udev->renderNode();
     }
     if (!device) {
         qCDebug(KWIN_VIRTUAL) << "Neither a render node, nor a vgem device found";
@@ -214,7 +215,7 @@ void EglGbmBackend::screenGeometryChanged(const QSize &size)
     // TODO, create new buffer?
 }
 
-SceneOpenGL::TexturePrivate *EglGbmBackend::createBackendTexture(SceneOpenGL::Texture *texture)
+SceneOpenGLTexturePrivate *EglGbmBackend::createBackendTexture(SceneOpenGLTexture *texture)
 {
     return new EglGbmTexture(texture, this);
 }
@@ -282,7 +283,7 @@ bool EglGbmBackend::usesOverlayWindow() const
  * EglTexture
  ************************************************/
 
-EglGbmTexture::EglGbmTexture(KWin::SceneOpenGL::Texture *texture, EglGbmBackend *backend)
+EglGbmTexture::EglGbmTexture(KWin::SceneOpenGLTexture *texture, EglGbmBackend *backend)
     : AbstractEglTexture(texture, backend)
 {
 }

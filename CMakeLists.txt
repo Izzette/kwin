@@ -279,6 +279,13 @@ set_package_properties(Xwayland PROPERTIES
     PURPOSE "Needed for running kwin_wayland"
     )
 
+find_package(Libcap)
+set_package_properties(Libcap PROPERTIES
+    TYPE OPTIONAL
+    PURPOSE "Needed for running kwin_wayland with real-time scheduling policy"
+)
+set(HAVE_LIBCAP ${Libcap_FOUND})
+
 ########### configure tests ###############
 include(CMakeDependentOption)
 
@@ -338,6 +345,11 @@ check_include_file("linux/fb.h"    HAVE_LINUX_FB_H)
 add_feature_info("linux/fb.h"
                  HAVE_LINUX_FB_H
                  "Required for the fbdev backend")
+
+check_symbol_exists(SCHED_RESET_ON_FORK "sched.h" HAVE_SCHED_RESET_ON_FORK)
+add_feature_info("SCHED_RESET_ON_FORK"
+                 HAVE_SCHED_RESET_ON_FORK
+                 "Required for running kwin_wayland with real-time scheduling")
 
 ########### global ###############
 set(kwin_effects_dbus_xml ${CMAKE_CURRENT_SOURCE_DIR}/org.kde.kwin.Effects.xml)
@@ -411,7 +423,6 @@ set(kwin_KDEINIT_SRCS
    toplevel.cpp
    unmanaged.cpp
    scene.cpp
-   scene_opengl.cpp
    screenlockerwatcher.cpp
    thumbnailitem.cpp
    lanczosfilter.cpp
@@ -441,7 +452,6 @@ set(kwin_KDEINIT_SRCS
     decorations/settings.cpp
     decorations/decorationrenderer.cpp
     decorations/decorations_logging.cpp
-    abstract_egl_backend.cpp
     platform.cpp
     shell_client.cpp
     wayland_server.cpp
@@ -458,6 +468,7 @@ set(kwin_KDEINIT_SRCS
     moving_client_x11_filter.cpp
     effects_mouse_interception_x11_filter.cpp
     window_property_notify_x11_filter.cpp
+    rootinfo_filter.cpp
    )
 
 if(KWIN_BUILD_TABBOX)
@@ -624,8 +635,20 @@ install(TARGETS kwin_x11         ${INSTALL_TARGETS_DEFAULT_ARGS} )
 
 add_executable(kwin_wayland main_wayland.cpp)
 target_link_libraries(kwin_wayland kwin)
+if (HAVE_LIBCAP)
+    target_link_libraries(kwin_wayland ${Libcap_LIBRARIES})
+endif()
 
 install(TARGETS kwin_wayland         ${INSTALL_TARGETS_DEFAULT_ARGS} )
+if (HAVE_LIBCAP)
+    install(
+    CODE "execute_process(
+            COMMAND
+                ${SETCAP_EXECUTABLE}
+                CAP_SYS_NICE=+ep
+                \$ENV{DESTDIR}${CMAKE_INSTALL_FULL_BINDIR}/kwin_wayland)"
+    )
+endif()
 
 add_subdirectory(platformsupport)
 add_subdirectory(plugins)
