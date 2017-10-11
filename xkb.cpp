@@ -18,16 +18,15 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 *********************************************************************/
 #include "xkb.h"
-#include "keyboard_input.h"
+#include "xkb_qt_mapping.h"
 #include "utils.h"
-#include "wayland_server.h"
 // frameworks
 #include <KConfigGroup>
-#include <KKeyServer>
 // KWayland
 #include <KWayland/Server/seat_interface.h>
 // Qt
 #include <QTemporaryFile>
+#include <QKeyEvent>
 // xkbcommon
 #include <xkbcommon/xkbcommon.h>
 #include <xkbcommon/xkbcommon-compose.h>
@@ -66,8 +65,8 @@ static void xkbLogHandler(xkb_context *context, xkb_log_level priority, const ch
     }
 }
 
-Xkb::Xkb(InputRedirection *input)
-    : m_input(input)
+Xkb::Xkb(QObject *parent)
+    : QObject(parent)
     , m_context(xkb_context_new(static_cast<xkb_context_flags>(0)))
     , m_keymap(NULL)
     , m_state(NULL)
@@ -223,7 +222,7 @@ void Xkb::updateKeymap(xkb_keymap *keymap)
 
 void Xkb::createKeymapFile()
 {
-    if (!waylandServer()) {
+    if (!m_seat) {
         return;
     }
     // TODO: uninstall keymap on server?
@@ -237,7 +236,7 @@ void Xkb::createKeymapFile()
     }
     const uint size = qstrlen(keymapString.data()) + 1;
 
-    QTemporaryFile *tmp = new QTemporaryFile(m_input);
+    QTemporaryFile *tmp = new QTemporaryFile(this);
     if (!tmp->open()) {
         delete tmp;
         return;
@@ -255,7 +254,7 @@ void Xkb::createKeymapFile()
         delete tmp;
         return;
     }
-    waylandServer()->seat()->setKeymap(tmp->handle(), size);
+    m_seat->setKeymap(tmp->handle(), size);
 }
 
 void Xkb::updateModifiers(uint32_t modsDepressed, uint32_t modsLatched, uint32_t modsLocked, uint32_t group)
@@ -327,7 +326,7 @@ void Xkb::updateModifiers()
     }
     if (m_leds != leds) {
         m_leds = leds;
-        emit m_input->keyboard()->ledsChanged(m_leds);
+        emit ledsChanged(m_leds);
     }
 
     m_currentLayout = xkb_state_serialize_layout(m_state, XKB_STATE_LAYOUT_EFFECTIVE);
@@ -338,10 +337,10 @@ void Xkb::updateModifiers()
 
 void Xkb::forwardModifiers()
 {
-    if (!waylandServer()) {
+    if (!m_seat) {
         return;
     }
-    waylandServer()->seat()->updateKeyboardModifiers(m_modifierState.depressed,
+    m_seat->updateKeyboardModifiers(m_modifierState.depressed,
                                                      m_modifierState.latched,
                                                      m_modifierState.locked,
                                                      m_currentLayout);
@@ -444,9 +443,22 @@ QString Xkb::toString(xkb_keysym_t keysym)
 
 Qt::Key Xkb::toQtKey(xkb_keysym_t keysym) const
 {
-    int key = Qt::Key_unknown;
-    KKeyServer::symXToKeyQt(keysym, &key);
-    return static_cast<Qt::Key>(key);
+    return xkbToQtKey(keysym);
+}
+
+xkb_keysym_t Xkb::fromQtKey(Qt::Key key, Qt::KeyboardModifiers mods) const
+{
+    return qtKeyToXkb(key, mods);
+}
+
+xkb_keysym_t Xkb::fromKeyEvent(QKeyEvent *event) const
+{
+    xkb_keysym_t sym = xkb_keysym_from_name(event->text().toUtf8().constData(), XKB_KEYSYM_NO_FLAGS);
+    if (sym == XKB_KEY_NoSymbol) {
+        // mapping from text failed, try mapping through KKeyServer
+        sym = fromQtKey(Qt::Key(event->key() & ~Qt::KeyboardModifierMask), event->modifiers());
+    }
+    return sym;
 }
 
 bool Xkb::shouldKeyRepeat(quint32 key) const
@@ -498,6 +510,11 @@ quint32 Xkb::numberOfLayouts() const
         return 0;
     }
     return xkb_keymap_num_layouts(m_keymap);
+}
+
+void Xkb::setSeat(KWayland::Server::SeatInterface *seat)
+{
+    m_seat = QPointer<KWayland::Server::SeatInterface>(seat);
 }
 
 }

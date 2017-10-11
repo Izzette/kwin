@@ -35,12 +35,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "tabbox.h"
 #endif
 #include "group.h"
-#include "overlaywindow.h"
 #include "rules.h"
 #include "unmanaged.h"
 #include "useractions.h"
 #include "effects.h"
-#include "screenedge.h"
 #include "screens.h"
 #include "xcbutils.h"
 
@@ -52,7 +50,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QStyleHints>
-#include <QWhatsThis>
 #include <QWheelEvent>
 
 #include <kkeyserver.h>
@@ -83,8 +80,6 @@ typedef struct xcb_ge_generic_event_t {
 
 namespace KWin
 {
-
-extern int currentRefreshRate();
 
 // ****************************************
 // Workspace
@@ -264,73 +259,9 @@ bool Workspace::workspaceEvent(xcb_generic_event_t *e)
 
     // events that should be handled before Clients can get them
     switch (eventType) {
-    case XCB_BUTTON_PRESS:
-    case XCB_BUTTON_RELEASE: {
-        was_user_interaction = true;
-        auto *mouseEvent = reinterpret_cast<xcb_button_press_event_t*>(e);
-#ifdef KWIN_BUILD_TABBOX
-        if (TabBox::TabBox::self()->isGrabbed()) {
-            return TabBox::TabBox::self()->handleMouseEvent(mouseEvent);
-        }
-#endif
-        if (effects && static_cast<EffectsHandlerImpl*>(effects)->checkInputWindowEvent(mouseEvent)) {
-            return true;
-        }
-        break;
-    }
-    case XCB_MOTION_NOTIFY: {
-        if (kwinApp()->operationMode() != Application::OperationModeX11) {
-            // ignore X11 pointer events generated on X windows if we are not on X
-            return true;
-        }
-        auto *mouseEvent = reinterpret_cast<xcb_motion_notify_event_t*>(e);
-        const QPoint rootPos(mouseEvent->root_x, mouseEvent->root_y);
-#ifdef KWIN_BUILD_TABBOX
-        if (TabBox::TabBox::self()->isGrabbed()) {
-            ScreenEdges::self()->check(rootPos, QDateTime::fromMSecsSinceEpoch(xTime()), true);
-            return TabBox::TabBox::self()->handleMouseEvent(mouseEvent);
-        }
-#endif
-        if (effects && static_cast<EffectsHandlerImpl*>(effects)->checkInputWindowEvent(mouseEvent)) {
-            return true;
-        }
-        if (QWidget::mouseGrabber()) {
-            ScreenEdges::self()->check(rootPos, QDateTime::fromMSecsSinceEpoch(xTime()), true);
-        } else {
-            ScreenEdges::self()->check(rootPos, QDateTime::fromMSecsSinceEpoch(mouseEvent->time));
-        }
-        break;
-    }
-    case XCB_KEY_PRESS: {
-        was_user_interaction = true;
-        int keyQt;
-        xcb_key_press_event_t *event = reinterpret_cast<xcb_key_press_event_t*>(e);
-        KKeyServer::xcbKeyPressEventToQt(event, &keyQt);
-//            qDebug() << "Workspace::keyPress( " << keyQt << " )";
-        if (Client *c = dynamic_cast<Client*>(movingClient)) {
-            c->keyPressEvent(keyQt, event->time);
-            return true;
-        }
-#ifdef KWIN_BUILD_TABBOX
-        if (TabBox::TabBox::self()->isGrabbed()) {
-            TabBox::TabBox::self()->keyPress(keyQt);
-            return true;
-        }
-#endif
-        break;
-    }
-    case XCB_KEY_RELEASE:
-        was_user_interaction = true;
-#ifdef KWIN_BUILD_TABBOX
-        if (TabBox::TabBox::self()->isGrabbed()) {
-            TabBox::TabBox::self()->keyRelease(reinterpret_cast<xcb_key_release_event_t*>(e));
-            return true;
-        }
-#endif
-        break;
     case XCB_CONFIGURE_NOTIFY:
         if (reinterpret_cast<xcb_configure_notify_event_t*>(e)->event == rootWindow())
-            x_stacking_dirty = true;
+            markXStackingOrderAsDirty();
         break;
     };
 
@@ -351,21 +282,6 @@ bool Workspace::workspaceEvent(xcb_generic_event_t *e)
         } else if (Unmanaged* c = findUnmanaged(eventWindow)) {
             if (c->windowEvent(e))
                 return true;
-        } else {
-            // We want to pass root window property events to effects
-            if (eventType == XCB_PROPERTY_NOTIFY) {
-                auto *event = reinterpret_cast<xcb_property_notify_event_t*>(e);
-                if (event->window == rootWindow()) {
-                    emit propertyNotify(event->atom);
-                }
-            }
-        }
-    }
-    if (Client *c = dynamic_cast<Client*>(movingClient)) {
-        if (eventType == XCB_BUTTON_PRESS || eventType == XCB_BUTTON_RELEASE || eventType == XCB_MOTION_NOTIFY) {
-            if (c->moveResizeGrabWindow() == reinterpret_cast<xcb_button_press_event_t*>(e)->event && c->windowEvent(e)) {
-                return true;
-            }
         }
     }
 
@@ -390,9 +306,6 @@ bool Workspace::workspaceEvent(xcb_generic_event_t *e)
         //do not confuse Qt with these events. After all, _we_ are the
         //window manager who does the reparenting.
         return true;
-    }
-    case XCB_DESTROY_NOTIFY: {
-        return false;
     }
     case XCB_MAP_REQUEST: {
         updateXTime();
@@ -431,26 +344,6 @@ bool Workspace::workspaceEvent(xcb_generic_event_t *e)
         return (event->event != event->window);   // hide wm typical event from Qt
     }
 
-    case XCB_ENTER_NOTIFY: {
-        if (QWhatsThis::inWhatsThisMode()) {
-            QWidget* w = QWidget::find(reinterpret_cast<xcb_enter_notify_event_t*>(e)->event);
-            if (w)
-                QWhatsThis::leaveWhatsThisMode();
-        }
-        if (ScreenEdges::self()->isEntered(reinterpret_cast<xcb_enter_notify_event_t*>(e)))
-            return true;
-        break;
-    }
-    case XCB_LEAVE_NOTIFY: {
-        if (!QWhatsThis::inWhatsThisMode())
-            break;
-        // TODO is this cliente ever found, given that client events are searched above?
-        const auto *event = reinterpret_cast<xcb_leave_notify_event_t*>(e);
-        Client* c = findClient(Predicate::FrameIdMatch, event->event);
-        if (c && event->detail != XCB_NOTIFY_DETAIL_INFERIOR)
-            QWhatsThis::leaveWhatsThisMode();
-        break;
-    }
     case XCB_CONFIGURE_REQUEST: {
         const auto *event = reinterpret_cast<xcb_configure_request_event_t*>(e);
         if (event->parent == rootWindow()) {
@@ -502,57 +395,8 @@ bool Workspace::workspaceEvent(xcb_generic_event_t *e)
         // fall through
     case XCB_FOCUS_OUT:
         return true; // always eat these, they would tell Qt that KWin is the active app
-    case XCB_CLIENT_MESSAGE:
-        if (ScreenEdges::self()->isEntered(reinterpret_cast<xcb_client_message_event_t*>(e)))
-            return true;
-        break;
-    case XCB_EXPOSE: {
-        const auto *event = reinterpret_cast<xcb_expose_event_t*>(e);
-        if (compositing()
-                && (event->window == rootWindow()   // root window needs repainting
-                    || (m_compositor->overlayWindow() != XCB_WINDOW_NONE && event->window == m_compositor->overlayWindow()))) { // overlay needs repainting
-            m_compositor->addRepaint(event->x, event->y, event->width, event->height);
-        }
-        break;
-    }
-    case XCB_VISIBILITY_NOTIFY: {
-        const auto *event = reinterpret_cast<xcb_visibility_notify_event_t*>(e);
-        if (compositing() && m_compositor->overlayWindow() != XCB_WINDOW_NONE && event->window == m_compositor->overlayWindow()) {
-            bool was_visible = m_compositor->isOverlayWindowVisible();
-            m_compositor->setOverlayWindowVisibility((event->state != XCB_VISIBILITY_FULLY_OBSCURED));
-            if (!was_visible && m_compositor->isOverlayWindowVisible()) {
-                // hack for #154825
-                m_compositor->addRepaintFull();
-                QTimer::singleShot(2000, m_compositor, SLOT(addRepaintFull()));
-            }
-            m_compositor->scheduleRepaint();
-        }
-        break;
-    }
     default:
-        if (eventType == Xcb::Extensions::self()->randrNotifyEvent() && Xcb::Extensions::self()->isRandrAvailable()) {
-            auto *event = reinterpret_cast<xcb_randr_screen_change_notify_event_t*>(e);
-            xcb_screen_t *screen = defaultScreen();
-            if (event->rotation & (XCB_RANDR_ROTATION_ROTATE_90 | XCB_RANDR_ROTATION_ROTATE_270)) {
-                screen->width_in_pixels = event->height;
-                screen->height_in_pixels = event->width;
-                screen->width_in_millimeters = event->mheight;
-                screen->height_in_millimeters = event->mwidth;
-            } else {
-                screen->width_in_pixels = event->width;
-                screen->height_in_pixels = event->height;
-                screen->width_in_millimeters = event->mwidth;
-                screen->height_in_millimeters = event->mheight;
-            }
-            if (compositing()) {
-                // desktopResized() should take care of when the size or
-                // shape of the desktop has changed, but we also want to
-                // catch refresh rate changes
-                if (m_compositor->xrrRefreshRate() != currentRefreshRate())
-                    m_compositor->setCompositeResetTimer(0);
-            }
-
-        } else if (eventType == Xcb::Extensions::self()->syncAlarmNotifyEvent() && Xcb::Extensions::self()->isSyncAvailable()) {
+        if (eventType == Xcb::Extensions::self()->syncAlarmNotifyEvent() && Xcb::Extensions::self()->isSyncAvailable()) {
             for (Client *c : clients)
                 c->syncEvent(reinterpret_cast< xcb_sync_alarm_notify_event_t* >(e));
             for (Client *c : desktops)
@@ -668,12 +512,10 @@ bool Client::windowEvent(xcb_generic_event_t *e)
         break;
     case XCB_KEY_PRESS:
         updateUserTime(reinterpret_cast<xcb_key_press_event_t*>(e)->time);
-        workspace()->setWasUserInteraction();
         break;
     case XCB_BUTTON_PRESS: {
         const auto *event = reinterpret_cast<xcb_button_press_event_t*>(e);
         updateUserTime(event->time);
-        workspace()->setWasUserInteraction();
         buttonPressEvent(event->event, event->detail, event->state,
                          event->event_x, event->event_y, event->root_x, event->root_y, event->time);
         break;
@@ -1092,7 +934,6 @@ bool Client::buttonPressEvent(xcb_window_t w, int button, int state, int x, int 
     if (w == wrapperId() || w == frameId() || w == inputId()) {
         // FRAME neco s tohohle by se melo zpracovat, nez to dostane dekorace
         updateUserTime(time);
-        workspace()->setWasUserInteraction();
         const bool bModKeyHeld = modKeyDown(state);
 
         if (isSplash()
@@ -1521,7 +1362,6 @@ void Toplevel::propertyNotifyEvent(xcb_property_notify_event_t *e)
             getSkipCloseAnimation();
         break;
     }
-    emit propertyNotify(this, e->atom);
 }
 
 void Toplevel::clientMessageEvent(xcb_client_message_event_t *e)

@@ -734,7 +734,7 @@ public:
     }
     bool keyEvent(QKeyEvent *event) override {
         if (event->type() == QEvent::KeyPress) {
-            return input()->shortcuts()->processKey(static_cast<KeyEvent*>(event)->modifiersRelevantForGlobalShortcuts(), event->nativeVirtualKey(), event->key());
+            return input()->shortcuts()->processKey(static_cast<KeyEvent*>(event)->modifiersRelevantForGlobalShortcuts(), event->key());
         }
         return false;
     }
@@ -826,8 +826,17 @@ class InternalWindowEventFilter : public InputEventFilter {
         if (!found) {
             return false;
         }
-        event->setAccepted(false);
-        if (QCoreApplication::sendEvent(found, event)) {
+        auto xkb = input()->keyboard()->xkb();
+        Qt::Key key = xkb->toQtKey(xkb->toKeysym(event->nativeScanCode()));
+        if (key == Qt::Key_Super_L || key == Qt::Key_Super_R) {
+            // workaround for QTBUG-62102
+            key = Qt::Key_Meta;
+        }
+        QKeyEvent internalEvent(event->type(), key,
+                                event->modifiers(), event->nativeScanCode(), event->nativeVirtualKey(),
+                                event->nativeModifiers(), event->text());
+        internalEvent.setAccepted(false);
+        if (QCoreApplication::sendEvent(found, &internalEvent)) {
             waylandServer()->seat()->setFocusedKeyboardSurface(nullptr);
             passToWaylandServer(event);
             return true;
@@ -1950,6 +1959,7 @@ Qt::KeyboardModifiers InputRedirection::modifiersRelevantForGlobalShortcuts() co
 
 void InputRedirection::registerShortcut(const QKeySequence &shortcut, QAction *action)
 {
+    Q_UNUSED(shortcut)
     kwinApp()->platform()->setupActionForGlobalAccel(action);
 }
 

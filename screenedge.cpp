@@ -30,7 +30,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "screenedge.h"
 
 // KWin
-#include "atoms.h"
 #include "gestures.h"
 #include <client.h>
 #include "cursor.h"
@@ -418,7 +417,7 @@ void Edge::switchDesktop(const QPoint &cursorPos)
         const uint interimDesktop = desktop;
         desktop = vds->toLeft(desktop, vds->isNavigationWrappingAround());
         if (desktop != interimDesktop)
-            pos.setX(displayWidth() - 1 - OFFSET);
+            pos.setX(screens()->size().width() - 1 - OFFSET);
     } else if (isRight()) {
         const uint interimDesktop = desktop;
         desktop = vds->toRight(desktop, vds->isNavigationWrappingAround());
@@ -429,7 +428,7 @@ void Edge::switchDesktop(const QPoint &cursorPos)
         const uint interimDesktop = desktop;
         desktop = vds->above(desktop, vds->isNavigationWrappingAround());
         if (desktop != interimDesktop)
-            pos.setY(displayHeight() - 1 - OFFSET);
+            pos.setY(screens()->size().height() - 1 - OFFSET);
     } else if (isBottom()) {
         const uint interimDesktop = desktop;
         desktop = vds->below(desktop, vds->isNavigationWrappingAround());
@@ -1365,22 +1364,6 @@ void ScreenEdges::check(const QPoint &pos, const QDateTime &now, bool forceNoPus
             }
         }
     }
-}
-
-bool ScreenEdges::isEntered(xcb_enter_notify_event_t *event)
-{
-    return handleEnterNotifiy(event->event,
-                              QPoint(event->root_x, event->root_y),
-                              QDateTime::fromMSecsSinceEpoch(event->time));
-}
-
-bool ScreenEdges::isEntered(xcb_client_message_event_t *event)
-{
-    if (event->type != atoms->xdnd_position) {
-        return false;
-    }
-    return handleDndNotify(event->window,
-                           QPoint(event->data.data32[2] >> 16, event->data.data32[2] & 0xffff));
 }
 
 bool ScreenEdges::isEntered(QMouseEvent *event)

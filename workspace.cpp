@@ -22,7 +22,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "workspace.h"
 // kwin libs
 #include <kwinglplatform.h>
-#include <kwinxrenderutils.h>
 // kwin
 #ifdef KWIN_BUILD_ACTIVITIES
 #include "activities.h"
@@ -39,6 +38,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "group.h"
 #include "input.h"
 #include "logind.h"
+#include "moving_client_x11_filter.h"
 #include "killwindow.h"
 #include "netinfo.h"
 #include "outline.h"
@@ -54,6 +54,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "useractions.h"
 #include "virtualdesktops.h"
 #include "shell_client.h"
+#include "was_user_interaction_x11_filter.h"
 #include "wayland_server.h"
 #include "xcbutils.h"
 #include "main.h"
@@ -112,7 +113,6 @@ Workspace::Workspace(const QString &sessionKey)
     , movingClient(0)
     , delayfocus_client(0)
     , force_restacking(false)
-    , x_stacking_dirty(true)
     , showing_desktop(false)
     , was_user_interaction(false)
     , session_saving(false)
@@ -182,10 +182,6 @@ Workspace::Workspace(const QString &sessionKey)
     TabBox::TabBox::create(this);
 #endif
 
-    // init XRenderUtils
-    if (kwinApp()->operationMode() == Application::OperationModeX11) {
-        XRenderUtils::init(connection(), rootWindow());
-    }
     if (Compositor::self()) {
         m_compositor = Compositor::self();
     } else {
@@ -215,6 +211,10 @@ Workspace::Workspace(const QString &sessionKey)
 
 void Workspace::init()
 {
+    if (kwinApp()->operationMode() == Application::OperationModeX11) {
+        m_wasUserInteractionFilter.reset(new WasUserInteractionX11Filter);
+        m_movingClientFilter.reset(new MovingClientX11Filter);
+    }
     updateXTime(); // Needed for proper initialization of user_time in Client ctor
     KSharedConfigPtr config = kwinApp()->config();
     kwinApp()->createScreens();
@@ -392,7 +392,7 @@ void Workspace::init()
                     if (!stacking_order.contains(c))    // It'll be updated later, and updateToolWindows() requires
                         stacking_order.append(c);      // c to be in stacking_order
                 }
-                x_stacking_dirty = true;
+                markXStackingOrderAsDirty();
                 updateStackingOrder(true);
                 updateClientArea();
                 if (c->wantsInput()) {
@@ -406,7 +406,7 @@ void Workspace::init()
                             QRect area = clientArea(PlacementArea, Screens::self()->current(), c->desktop());
                             c->placeIn(area);
                         }
-                        x_stacking_dirty = true;
+                        markXStackingOrderAsDirty();
                         updateStackingOrder(true);
                         updateClientArea();
                         if (c->wantsInput()) {
@@ -416,7 +416,7 @@ void Workspace::init()
                 );
                 connect(c, &ShellClient::windowHidden, this,
                     [this] {
-                        x_stacking_dirty = true;
+                        markXStackingOrderAsDirty();
                         updateStackingOrder(true);
                         updateClientArea();
                     }
@@ -426,12 +426,24 @@ void Workspace::init()
         connect(w, &WaylandServer::shellClientRemoved, this,
             [this] (ShellClient *c) {
                 m_allClients.removeAll(c);
+                if (c == most_recently_raised) {
+                    most_recently_raised = nullptr;
+                }
                 if (c == delayfocus_client) {
                     cancelDelayFocus();
                 }
+                if (c == last_active_client) {
+                    last_active_client = nullptr;
+                }
+                if (client_keys_client == c) {
+                    setupWindowShortcutDone(false);
+                }
+                if (!c->shortcut().isEmpty()) {
+                    c->setShortcut(QString());   // Remove from client_keys
+                }
                 clientHidden(c);
                 emit clientRemoved(c);
-                x_stacking_dirty = true;
+                markXStackingOrderAsDirty();
                 updateStackingOrder(true);
                 updateClientArea();
             }
@@ -497,9 +509,6 @@ Workspace::~Workspace()
 
     // TODO: ungrabXServer();
 
-    if (kwinApp()->operationMode() == Application::OperationModeX11) {
-        XRenderUtils::cleanup();
-    }
     Xcb::Extensions::destroy();
     _self = 0;
 }
@@ -562,7 +571,7 @@ void Workspace::addClient(Client* c)
         unconstrained_stacking_order.append(c);   // Raise if it hasn't got any stacking position yet
     if (!stacking_order.contains(c))    // It'll be updated later, and updateToolWindows() requires
         stacking_order.append(c);      // c to be in stacking_order
-    x_stacking_dirty = true;
+    markXStackingOrderAsDirty();
     updateClientArea(); // This cannot be in manage(), because the client got added only now
     updateClientLayer(c);
     if (c->isDesktop()) {
@@ -576,7 +585,6 @@ void Workspace::addClient(Client* c)
     updateStackingOrder(true);   // Propagate new client
     if (c->isUtility() || c->isMenu() || c->isToolbar())
         updateToolWindows(true);
-    checkNonExistentClients();
 #ifdef KWIN_BUILD_TABBOX
     if (TabBox::TabBox::self()->isDisplayed())
         TabBox::TabBox::self()->reset(true);
@@ -586,7 +594,7 @@ void Workspace::addClient(Client* c)
 void Workspace::addUnmanaged(Unmanaged* c)
 {
     unmanaged.append(c);
-    x_stacking_dirty = true;
+    markXStackingOrderAsDirty();
 }
 
 /**
@@ -622,7 +630,7 @@ void Workspace::removeClient(Client* c)
     clients.removeAll(c);
     m_allClients.removeAll(c);
     desktops.removeAll(c);
-    x_stacking_dirty = true;
+    markXStackingOrderAsDirty();
     attention_chain.removeAll(c);
     Group* group = findGroup(c->window());
     if (group != NULL)
@@ -652,7 +660,7 @@ void Workspace::removeUnmanaged(Unmanaged* c)
     assert(unmanaged.contains(c));
     unmanaged.removeAll(c);
     emit unmanagedRemoved(c);
-    x_stacking_dirty = true;
+    markXStackingOrderAsDirty();
 }
 
 void Workspace::addDeleted(Deleted* c, Toplevel *orig)
@@ -671,7 +679,7 @@ void Workspace::addDeleted(Deleted* c, Toplevel *orig)
     } else {
         stacking_order.append(c);
     }
-    x_stacking_dirty = true;
+    markXStackingOrderAsDirty();
     connect(c, SIGNAL(needsRepaint()), m_compositor, SLOT(scheduleRepaint()));
 }
 
@@ -682,7 +690,7 @@ void Workspace::removeDeleted(Deleted* c)
     deleted.removeAll(c);
     unconstrained_stacking_order.removeAll(c);
     stacking_order.removeAll(c);
-    x_stacking_dirty = true;
+    markXStackingOrderAsDirty();
     if (c->wasClient() && m_compositor) {
         m_compositor->updateCompositeBlocking();
     }
@@ -793,24 +801,6 @@ void Workspace::slotReloadConfig()
 void Workspace::reconfigure()
 {
     reconfigureTimer.start(200);
-}
-
-/**
- * This D-Bus call is used by the compositing kcm. Since the reconfigure()
- * D-Bus call delays the actual reconfiguring, it is not possible to immediately
- * call compositingActive(). Therefore the kcm will instead call this to ensure
- * the reconfiguring has already happened.
- */
-bool Workspace::waitForCompositingSetup()
-{
-    if (reconfigureTimer.isActive()) {
-        reconfigureTimer.stop();
-        slotReconfigure();
-    }
-    if (m_compositor) {
-        return m_compositor->isActive();
-    }
-    return false;
 }
 
 /**
@@ -937,7 +927,9 @@ void Workspace::updateClientVisibilityOnDesktopChange(uint oldDesktop, uint newD
         }
     }
     // Now propagate the change, after hiding, before showing
-    rootInfo()->setCurrentDesktop(VirtualDesktopManager::self()->current());
+    if (rootInfo()) {
+        rootInfo()->setCurrentDesktop(VirtualDesktopManager::self()->current());
+    }
 
     if (movingClient && !movingClient->isOnDesktop(newDesktop)) {
         movingClient->setDesktop(newDesktop);
@@ -1235,7 +1227,9 @@ void Workspace::sendClientToScreen(AbstractClient* c, int screen)
 
 void Workspace::sendPingToWindow(xcb_window_t window, xcb_timestamp_t timestamp)
 {
-    rootInfo()->sendPing(window, timestamp);
+    if (rootInfo()) {
+        rootInfo()->sendPing(window, timestamp);
+    }
 }
 
 /**
@@ -1280,7 +1274,9 @@ void Workspace::focusToNull()
 void Workspace::setShowingDesktop(bool showing)
 {
     const bool changed = showing != showing_desktop;
-    rootInfo()->setShowingDesktop(showing);
+    if (rootInfo() && changed) {
+        rootInfo()->setShowingDesktop(showing);
+    }
     showing_desktop = showing;
 
     AbstractClient *topDesk = nullptr;
@@ -1640,13 +1636,6 @@ QString Workspace::supportInformation() const
     return support;
 }
 
-void Workspace::slotToggleCompositing()
-{
-    if (m_compositor) {
-        m_compositor->slotToggleCompositing();
-    }
-}
-
 Client *Workspace::findClient(std::function<bool (const Client*)> func) const
 {
     if (Client *ret = Toplevel::findInList(clients, func)) {
@@ -1764,6 +1753,25 @@ Toplevel *Workspace::findInternal(QWindow *w) const
     } else {
         return waylandServer()->findClient(w);
     }
+}
+
+void Workspace::markXStackingOrderAsDirty()
+{
+    m_xStackingQueryTree.reset(new Xcb::Tree(rootWindow()));
+}
+
+void Workspace::setWasUserInteraction()
+{
+    if (was_user_interaction) {
+        return;
+    }
+    was_user_interaction = true;
+    // might be called from within the filter, so delay till we now the filter returned
+    QTimer::singleShot(0, this,
+        [this] {
+            m_wasUserInteractionFilter.reset();
+        }
+    );
 }
 
 } // namespace

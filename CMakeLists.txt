@@ -1,8 +1,9 @@
+cmake_minimum_required(VERSION 3.1 FATAL_ERROR)
+
 project(KWIN)
-set(PROJECT_VERSION "5.10.5")
+set(PROJECT_VERSION "5.11.90")
 set(PROJECT_VERSION_MAJOR 5)
 
-cmake_minimum_required(VERSION 2.8.12 FATAL_ERROR)
 set(QT_MIN_VERSION "5.7.0")
 set(KF5_MIN_VERSION "5.34.0")
 
@@ -48,8 +49,12 @@ include(ECMOptionalAddSubdirectory)
 
 add_definitions(-DQT_DISABLE_DEPRECATED_BEFORE=0 -DQT_USE_QSTRINGBUILDER)
 
-set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-inconsistent-missing-override")
+endif()
 
 find_package(Qt5Multimedia QUIET)
 set_package_properties(Qt5Multimedia PROPERTIES
@@ -229,7 +234,6 @@ find_package(XCB 1.10
         SHM
         GLX
         CURSOR
-    OPTIONAL_COMPONENTS
         ICCCM
 )
 set_package_properties(XCB PROPERTIES TYPE REQUIRED)
@@ -323,8 +327,17 @@ add_feature_info("prctl/procctl tracing control"
                  CAN_DISABLE_PTRACE
                  "Required for disallowing ptrace on kwin_wayland process")
 
+check_include_file("sys/sysmacros.h" HAVE_SYS_SYSMACROS_H)
 configure_file(config-kwin.h.cmake ${CMAKE_CURRENT_BINARY_DIR}/config-kwin.h )
 
+check_include_file("linux/vt.h" HAVE_LINUX_VT_H)
+add_feature_info("linux/vt.h"
+                 HAVE_LINUX_VT_H
+                 "Required for virtual terminal support under wayland")
+check_include_file("linux/fb.h"    HAVE_LINUX_FB_H)
+add_feature_info("linux/fb.h"
+                 HAVE_LINUX_FB_H
+                 "Required for the fbdev backend")
 
 ########### global ###############
 set(kwin_effects_dbus_xml ${CMAKE_CURRENT_SOURCE_DIR}/org.kde.kwin.Effects.xml)
@@ -335,6 +348,7 @@ include_directories(BEFORE
     ${CMAKE_CURRENT_SOURCE_DIR}/libkwineffects
     ${CMAKE_CURRENT_SOURCE_DIR}/effects
     ${CMAKE_CURRENT_SOURCE_DIR}/tabbox
+    ${CMAKE_CURRENT_SOURCE_DIR}/platformsupport
     )
 
 add_subdirectory( libkwineffects )
@@ -397,9 +411,7 @@ set(kwin_KDEINIT_SRCS
    toplevel.cpp
    unmanaged.cpp
    scene.cpp
-   scene_xrender.cpp
    scene_opengl.cpp
-   scene_qpainter.cpp
    screenlockerwatcher.cpp
    thumbnailitem.cpp
    lanczosfilter.cpp
@@ -440,6 +452,12 @@ set(kwin_KDEINIT_SRCS
     xkb.cpp
     gestures.cpp
     popup_input_filter.cpp
+    abstract_opengl_context_attribute_builder.cpp
+    egl_context_attribute_builder.cpp
+    was_user_interaction_x11_filter.cpp
+    moving_client_x11_filter.cpp
+    effects_mouse_interception_x11_filter.cpp
+    window_property_notify_x11_filter.cpp
    )
 
 if(KWIN_BUILD_TABBOX)
@@ -453,6 +471,7 @@ if(KWIN_BUILD_TABBOX)
         tabbox/tabboxconfig.cpp
         tabbox/tabboxhandler.cpp
         tabbox/tabbox_logging.cpp
+        tabbox/x11_filter.cpp
   )
 endif()
 
@@ -478,8 +497,13 @@ if(HAVE_INPUT)
         libinput/device.cpp
         libinput/events.cpp
         libinput/libinput_logging.cpp
-        virtual_terminal.cpp
     )
+    if (HAVE_LINUX_VT_H)
+         set(kwin_KDEINIT_SRCS
+             ${kwin_KDEINIT_SRCS}
+             virtual_terminal.cpp
+         )
+    endif()
 endif()
 
 kconfig_add_kcfg_files(kwin_KDEINIT_SRCS settings.kcfgc)
@@ -503,7 +527,6 @@ ki18n_wrap_ui(kwin_KDEINIT_SRCS
 
 set(kwin_OWN_LIBS
     kwineffects
-    kwinxrenderutils
     kwin4_effect_builtins
 )
 
@@ -512,7 +535,6 @@ set(kwin_QT_LIBS
     Qt5::DBus
     Qt5::Quick
     Qt5::Script
-    Qt5::X11Extras
 )
 
 set(kwin_KDE_LIBS
@@ -549,6 +571,7 @@ set(kwin_XCB_LIBS
     XCB::KEYSYMS
     XCB::SHM
     XCB::GLX
+    XCB::ICCCM
 )
 
 set(kwin_WAYLAND_LIBS
@@ -593,7 +616,7 @@ generate_export_header(kwin EXPORT_FILE_NAME kwin_export.h)
 target_link_libraries(kwin kwinglutils ${epoxy_LIBRARY})
 
 kf5_add_kdeinit_executable(kwin_x11 main_x11.cpp)
-target_link_libraries(kdeinit_kwin_x11 kwin KF5::Crash)
+target_link_libraries(kdeinit_kwin_x11 kwin KF5::Crash Qt5::X11Extras)
 
 install(TARGETS kwin             ${INSTALL_TARGETS_DEFAULT_ARGS} LIBRARY NAMELINK_SKIP )
 install(TARGETS kdeinit_kwin_x11 ${INSTALL_TARGETS_DEFAULT_ARGS} )
@@ -604,6 +627,7 @@ target_link_libraries(kwin_wayland kwin)
 
 install(TARGETS kwin_wayland         ${INSTALL_TARGETS_DEFAULT_ARGS} )
 
+add_subdirectory(platformsupport)
 add_subdirectory(plugins)
 
 ########### install files ###############
@@ -646,9 +670,9 @@ endif()
 
 feature_summary(WHAT ALL INCLUDE_QUIET_PACKAGES FATAL_ON_MISSING_REQUIRED_PACKAGES)
 
-include(ECMPackageConfigHelpers)
+include(CMakePackageConfigHelpers)
 set(CMAKECONFIG_INSTALL_DIR "${CMAKECONFIG_INSTALL_PREFIX}/KWinDBusInterface")
-ecm_configure_package_config_file(KWinDBusInterfaceConfig.cmake.in
+configure_package_config_file(KWinDBusInterfaceConfig.cmake.in
     "${CMAKE_CURRENT_BINARY_DIR}/KWinDBusInterfaceConfig.cmake"
     PATH_VARS KDE_INSTALL_DBUSINTERFACEDIR
     INSTALL_DESTINATION ${CMAKECONFIG_INSTALL_DIR})

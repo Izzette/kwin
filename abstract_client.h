@@ -343,7 +343,24 @@ public:
     }
 
     virtual void updateMouseGrab();
-    virtual QString caption(bool full = true, bool stripped = false) const = 0;
+    /**
+     * @returns The caption consisting of @link{captionNormal} and @link{captionSuffix}
+     * @see captionNormal
+     * @see captionSuffix
+     **/
+    QString caption() const;
+    /**
+     * @returns The caption as set by the AbstractClient without any suffix.
+     * @see caption
+     * @see captionSuffix
+     **/
+    virtual QString captionNormal() const = 0;
+    /**
+     * @returns The suffix added to the caption (e.g. shortcut, machine name, etc.)
+     * @see caption
+     * @see captionNormal
+     **/
+    virtual QString captionSuffix() const = 0;
     virtual bool isCloseable() const = 0;
     // TODO: remove boolean trap
     virtual bool isShown(bool shaded_is_shown) const = 0;
@@ -384,8 +401,10 @@ public:
      */
     bool isSpecialWindow() const;
     void sendToScreen(int screen);
-    virtual const QKeySequence &shortcut() const  = 0;
-    virtual void setShortcut(const QString &cut) = 0;
+    const QKeySequence &shortcut() const {
+        return _shortcut;
+    }
+    void setShortcut(const QString &cut);
     virtual bool performMouseCommand(Options::MouseCommand, const QPoint &globalPos);
     void setOnAllDesktops(bool set);
     void setDesktop(int);
@@ -496,17 +515,6 @@ public:
     // a helper for the workspace window packing. tests for screen validity and updates since in maximization case as with normal moving
     void packTo(int left, int top);
 
-    enum QuickTileFlag {
-        QuickTileNone = 0,
-        QuickTileLeft = 1,
-        QuickTileRight = 1<<1,
-        QuickTileTop = 1<<2,
-        QuickTileBottom = 1<<3,
-        QuickTileHorizontal = QuickTileLeft|QuickTileRight,
-        QuickTileVertical = QuickTileTop|QuickTileBottom,
-        QuickTileMaximize = QuickTileLeft|QuickTileRight|QuickTileTop|QuickTileBottom
-    };
-    Q_DECLARE_FLAGS(QuickTileMode, QuickTileFlag)
     /** Set the quick tile mode ("snap") of this window.
      * This will also handle preserving and restoring of window geometry as necessary.
      * @param mode The tile mode (left/right) to give this window.
@@ -991,6 +999,16 @@ protected:
 
     void setUnresponsive(bool unresponsive);
 
+    virtual void setShortcutInternal();
+    QString shortcutCaptionSuffix() const;
+    virtual void updateCaption() = 0;
+
+    /**
+     * Looks for another AbstractClient with same @link{captionNormal} and @link{captionSuffix}.
+     * If no such AbstractClient exists @c nullptr is returned.
+     **/
+    AbstractClient *findClientWithSameCaption() const;
+
 private:
     void handlePaletteChange();
     QSharedPointer<TabBox::TabBoxClientImpl> m_tabBoxClient;
@@ -1024,11 +1042,11 @@ private:
     Layer m_layer = UnknownLayer;
 
     // electric border/quick tiling
-    QuickTileMode m_electricMode = QuickTileNone;
+    QuickTileMode m_electricMode = QuickTileFlag::None;
     bool m_electricMaximizing = false;
     /** The quick tile mode of this window.
      */
-    int m_quickTileMode = QuickTileNone;
+    int m_quickTileMode = int(QuickTileFlag::None);
     QTimer *m_electricMaximizingDelay = nullptr;
 
     // geometry
@@ -1064,6 +1082,8 @@ private:
     QString m_applicationMenuObjectPath;
 
     bool m_unresponsive = false;
+
+    QKeySequence _shortcut;
 
     static bool s_haveResizeEffect;
 };
@@ -1135,6 +1155,5 @@ inline void AbstractClient::setPendingGeometryUpdate(PendingGeometry_t update)
 
 Q_DECLARE_METATYPE(KWin::AbstractClient*)
 Q_DECLARE_METATYPE(QList<KWin::AbstractClient*>)
-Q_DECLARE_OPERATORS_FOR_FLAGS(KWin::AbstractClient::QuickTileMode)
 
 #endif

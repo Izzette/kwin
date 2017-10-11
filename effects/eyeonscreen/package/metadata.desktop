@@ -21,6 +21,7 @@ Name[ko]=화면 위의 눈
 Name[nb]=øye på Skjerm
 Name[nl]=eye On Screen
 Name[nn]=Auge på skjerm
+Name[pa]=ਸਕਰੀਨ 'ਤੇ ਅੱਖ
 Name[pl]=Oko na ekranie
 Name[pt]=Olho no Ecrã
 Name[pt_BR]=Olho na tela
@@ -73,7 +74,7 @@ Comment[sv]=Sug in fönster i skrivbordet för att visa det senare. Det kanske p
 Comment[tr]=İlerisini göstermek için pencereleri masaüstüne topla. Bu size bir şey hatırlatabilir.
 Comment[uk]=Втягнути вікна до стільниці, щоб показати останню. Так вам простіше буде щось згадати.
 Comment[x-test]=xxSuck windows into desktop to show the latter. This might remind you of something.xx
-Comment[zh_CN]=将窗口吸入桌面并显示桌面。这可能会让你想起什么。
+Comment[zh_CN]=将窗口吸入桌面并显示桌面。这可能会让您想起什么。
 Comment[zh_TW]=將視窗「吸」入桌面。
 
 Type=Service

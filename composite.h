@@ -79,17 +79,9 @@ public:
      **/
     bool checkForOverlayWindow(WId w) const;
     /**
-     * @returns The Scene's Overlay X Window.
-     **/
-    WId overlayWindow() const;
-    /**
      * @returns Whether the Scene's Overlay X Window is visible.
      **/
     bool isOverlayWindowVisible() const;
-    /**
-     * Set's the Scene's Overlay X Window visibility to @p visible.
-     **/
-    void setOverlayWindowVisibility(bool visible);
 
     Scene *scene() {
         return m_scene;
@@ -215,6 +207,7 @@ private:
      * Continues the startup after Scene And Workspace are created
      **/
     void startupWithWorkspace();
+    void setupX11Support();
 
     /**
      * Whether the Compositor is currently suspended, 8 bits encoding the reason

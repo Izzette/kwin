@@ -295,7 +295,7 @@ public:
     QByteArray wmClientMachine(bool use_localhost) const;
     const ClientMachine *clientMachine() const;
     Window wmClientLeader() const;
-    pid_t pid() const;
+    virtual pid_t pid() const;
     static bool resourceMatch(const Toplevel* c1, const Toplevel* c2);
 
     bool readyForPainting() const; // true if the window has been already painted its contents
@@ -440,7 +440,6 @@ public:
 Q_SIGNALS:
     void opacityChanged(KWin::Toplevel* toplevel, qreal oldOpacity);
     void damaged(KWin::Toplevel* toplevel, const QRect& damage);
-    void propertyNotify(KWin::Toplevel* toplevel, long a);
     void geometryChanged();
     void geometryShapeChanged(KWin::Toplevel* toplevel, const QRect& old);
     void paddingChanged(KWin::Toplevel* toplevel, const QRect& old);

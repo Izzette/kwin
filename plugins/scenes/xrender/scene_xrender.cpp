@@ -25,6 +25,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #ifdef KWIN_HAVE_XRENDER_COMPOSITING
 
+#include "logging.h"
 #include "toplevel.h"
 #include "client.h"
 #include "composite.h"
@@ -32,6 +33,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "effects.h"
 #include "main.h"
 #include "overlaywindow.h"
+#include "platform.h"
+#include "screens.h"
 #include "xcbutils.h"
 #include "kwinxrenderutils.h"
 #include "decorations/decoratedclient.h"
@@ -94,7 +97,7 @@ void XRenderBackend::setBuffer(xcb_render_picture_t buffer)
 
 void XRenderBackend::setFailed(const QString& reason)
 {
-    qCCritical(KWIN_CORE) << "Creating the XRender backend failed: " << reason;
+    qCCritical(KWIN_XRENDER) << "Creating the XRender backend failed: " << reason;
     m_failed = true;
 }
 
@@ -109,7 +112,7 @@ void XRenderBackend::screenGeometryChanged(const QSize &size)
 //****************************************
 X11XRenderBackend::X11XRenderBackend()
     : XRenderBackend()
-    , m_overlayWindow(new OverlayWindow())
+    , m_overlayWindow(kwinApp()->platform()->createOverlayWindow())
     , m_front(XCB_RENDER_PICTURE_NONE)
     , m_format(0)
 {
@@ -172,7 +175,8 @@ void X11XRenderBackend::init(bool createOverlay)
 void X11XRenderBackend::createBuffer()
 {
     xcb_pixmap_t pixmap = xcb_generate_id(connection());
-    xcb_create_pixmap(connection(), Xcb::defaultDepth(), pixmap, rootWindow(), displayWidth(), displayHeight());
+    const auto displaySize = screens()->displaySize();
+    xcb_create_pixmap(connection(), Xcb::defaultDepth(), pixmap, rootWindow(), displaySize.width(), displaySize.height());
     xcb_render_picture_t b = xcb_generate_id(connection());
     xcb_render_create_picture(connection(), b, pixmap, m_format, 0, NULL);
     xcb_free_pixmap(connection(), pixmap);   // The picture owns the pixmap now
@@ -181,6 +185,7 @@ void X11XRenderBackend::createBuffer()
 
 void X11XRenderBackend::present(int mask, const QRegion &damage)
 {
+    const auto displaySize = screens()->displaySize();
     if (mask & Scene::PAINT_SCREEN_REGION) {
         // Use the damage region as the clip region for the root window
         XFixesRegion frontRegion(damage);
@@ -188,13 +193,13 @@ void X11XRenderBackend::present(int mask, const QRegion &damage)
         // copy composed buffer to the root window
         xcb_xfixes_set_picture_clip_region(connection(), buffer(), XCB_XFIXES_REGION_NONE, 0, 0);
         xcb_render_composite(connection(), XCB_RENDER_PICT_OP_SRC, buffer(), XCB_RENDER_PICTURE_NONE,
-                             m_front, 0, 0, 0, 0, 0, 0, displayWidth(), displayHeight());
+                             m_front, 0, 0, 0, 0, 0, 0, displaySize.width(), displaySize.height());
         xcb_xfixes_set_picture_clip_region(connection(), m_front, XCB_XFIXES_REGION_NONE, 0, 0);
         xcb_flush(connection());
     } else {
         // copy composed buffer to the root window
         xcb_render_composite(connection(), XCB_RENDER_PICT_OP_SRC, buffer(), XCB_RENDER_PICTURE_NONE,
-                             m_front, 0, 0, 0, 0, 0, 0, displayWidth(), displayHeight());
+                             m_front, 0, 0, 0, 0, 0, 0, displaySize.width(), displaySize.height());
         xcb_flush(connection());
     }
 }
@@ -280,7 +285,7 @@ void SceneXrender::paintBackground(QRegion region)
 {
     xcb_render_color_t col = { 0, 0, 0, 0xffff }; // black
     const QVector<xcb_rectangle_t> &rects = Xcb::regionToRects(region);
-    xcb_render_fill_rectangles(connection(), XCB_RENDER_PICT_OP_SRC, bufferPicture(), col, rects.count(), rects.data());
+    xcb_render_fill_rectangles(connection(), XCB_RENDER_PICT_OP_SRC, xrenderBufferPicture(), col, rects.count(), rects.data());
 }
 
 Scene::Window *SceneXrender::createWindow(Toplevel *toplevel)
@@ -315,7 +320,6 @@ SceneXrender::Window::Window(Toplevel* c, SceneXrender *scene)
     : Scene::Window(c)
     , m_scene(scene)
     , format(XRenderUtils::findPictFormat(c->visual()))
-    , alpha_cached_opacity(0.0)
 {
 }
 
@@ -516,7 +520,7 @@ void SceneXrender::Window::performPaint(int mask, QRegion region, WindowPaintDat
     const bool blitInTempPixmap = xRenderOffscreen() || (data.crossFadeProgress() < 1.0 && !opaque) ||
                                  (scaled && (wantShadow || (client && !client->noBorder()) || (deleted && !deleted->noBorder())));
 
-    xcb_render_picture_t renderTarget = m_scene->bufferPicture();
+    xcb_render_picture_t renderTarget = m_scene->xrenderBufferPicture();
     if (blitInTempPixmap) {
         if (scene_xRenderOffscreenTarget()) {
             temp_visibleRect = toplevel->visibleRect().translated(-toplevel->pos());
@@ -730,7 +734,7 @@ xcb_render_composite(connection(), XCB_RENDER_PICT_OP_OVER, m_xrenderShadow->pic
             xcb_render_set_picture_transform(connection(), *s_tempPicture, xform);
             setPictureFilter(*s_tempPicture, filter);
             xcb_render_composite(connection(), XCB_RENDER_PICT_OP_OVER, *s_tempPicture,
-                                 XCB_RENDER_PICTURE_NONE, m_scene->bufferPicture(),
+                                 XCB_RENDER_PICTURE_NONE, m_scene->xrenderBufferPicture(),
                                  0, 0, 0, 0, r.x(), r.y(), r.width(), r.height());
             xcb_render_set_picture_transform(connection(), *s_tempPicture, identity);
         }
@@ -1294,5 +1298,28 @@ void SceneXRenderDecorationRenderer::reparent(Deleted *deleted)
 #undef DOUBLE_TO_FIXED
 #undef FIXED_TO_DOUBLE
 
+XRenderFactory::XRenderFactory(QObject *parent)
+    : SceneFactory(parent)
+{
+}
+
+XRenderFactory::~XRenderFactory() = default;
+
+Scene *XRenderFactory::create(QObject *parent) const
+{
+    auto s = SceneXrender::createScene(parent);
+    if (s && s->initFailed()) {
+        delete s;
+        s = nullptr;
+    }
+    return s;
+}
+
 } // namespace
 #endif
+
+
+void KWin::SceneXrender::paintCursor()
+{
+
+}

@@ -18,6 +18,11 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 *********************************************************************/
 #include "screens_xrandr.h"
+#ifndef KWIN_UNIT_TEST
+#include "composite.h"
+#include "options.h"
+#include "workspace.h"
+#endif
 #include "xcbutils.h"
 
 
@@ -74,7 +79,7 @@ void XRandRScreens::update()
         float refreshRate = -1.0f;
         for (int j = 0; j < resources->num_modes; ++j) {
             if (info->mode == modes[j].id) {
-                if (modes[j].htotal*modes[j].vtotal) { // BUG 313996
+                if (modes[j].htotal != 0 && modes[j].vtotal != 0) { // BUG 313996
                     // refresh rate calculation - WTF was wikipedia 1998 when I needed it?
                     int dotclock = modes[j].dot_clock,
                           vtotal = modes[j].vtotal;
@@ -126,7 +131,7 @@ QRect XRandRScreens::geometry(int screen) const
         return QRect();
     }
     return m_geometries.at(screen).isValid() ? m_geometries.at(screen) :
-           QRect(0, 0, displayWidth(), displayHeight()); // xinerama, lacks RandR
+           QRect(QPoint(0, 0), displaySize()); // xinerama, lacks RandR
 }
 
 QString XRandRScreens::name(int screen) const
@@ -185,7 +190,41 @@ bool XRandRScreens::event(xcb_generic_event_t *event)
     Q_ASSERT((event->response_type & ~0x80) == Xcb::Extensions::self()->randrNotifyEvent());
     // let's try to gather a few XRandR events, unlikely that there is just one
     startChangedTimer();
+
+    // update default screen
+    auto *xrrEvent = reinterpret_cast<xcb_randr_screen_change_notify_event_t*>(event);
+    xcb_screen_t *screen = defaultScreen();
+    if (xrrEvent->rotation & (XCB_RANDR_ROTATION_ROTATE_90 | XCB_RANDR_ROTATION_ROTATE_270)) {
+        screen->width_in_pixels = xrrEvent->height;
+        screen->height_in_pixels = xrrEvent->width;
+        screen->width_in_millimeters = xrrEvent->mheight;
+        screen->height_in_millimeters = xrrEvent->mwidth;
+    } else {
+        screen->width_in_pixels = xrrEvent->width;
+        screen->height_in_pixels = xrrEvent->height;
+        screen->width_in_millimeters = xrrEvent->mwidth;
+        screen->height_in_millimeters = xrrEvent->mheight;
+    }
+#ifndef KWIN_UNIT_TEST
+    if (workspace()->compositing()) {
+        // desktopResized() should take care of when the size or
+        // shape of the desktop has changed, but we also want to
+        // catch refresh rate changes
+        if (Compositor::self()->xrrRefreshRate() != Options::currentRefreshRate())
+            Compositor::self()->setCompositeResetTimer(0);
+    }
+#endif
+
     return false;
+}
+
+QSize XRandRScreens::displaySize() const
+{
+    xcb_screen_t *screen = defaultScreen();
+    if (!screen) {
+        return Screens::size();
+    }
+    return QSize(screen->width_in_pixels, screen->height_in_pixels);
 }
 
 } // namespace

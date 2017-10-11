@@ -58,7 +58,9 @@ class Client;
 class Compositor;
 class Deleted;
 class EffectLoader;
+class EffectsMouseInterceptionX11Filter;
 class Unmanaged;
+class WindowPropertyNotifyX11Filter;
 
 class KWIN_EXPORT EffectsHandlerImpl : public EffectsHandler
 {
@@ -254,6 +256,10 @@ public:
 
     void highlightWindows(const QVector<EffectWindow *> &windows);
 
+    bool isPropertyTypeRegistered(xcb_atom_t atom) const {
+        return registered_atoms.contains(atom);
+    }
+
 public Q_SLOTS:
     void slotCurrentTabAboutToChange(EffectWindow* from, EffectWindow* to);
     void slotTabAdded(EffectWindow* from, EffectWindow* to);
@@ -281,7 +287,6 @@ protected Q_SLOTS:
     void slotGeometryShapeChanged(KWin::Toplevel *t, const QRect &old);
     void slotPaddingChanged(KWin::Toplevel *t, const QRect &old);
     void slotWindowDamaged(KWin::Toplevel *t, const QRect& r);
-    void slotPropertyNotify(KWin::Toplevel *t, long atom);
 
 protected:
     void connectNotify(const QMetaMethod &signal) override;
@@ -319,6 +324,8 @@ private:
     QList<Effect*> m_grabbedMouseEffects;
     EffectLoader *m_effectLoader;
     int m_trackingCursorChanges;
+    std::unique_ptr<EffectsMouseInterceptionX11Filter> m_x11MouseInterception;
+    std::unique_ptr<WindowPropertyNotifyX11Filter> m_x11WindowPropertyNotify;
 };
 
 class EffectWindowImpl : public EffectWindow
@@ -393,7 +400,7 @@ private:
     Group* group;
 };
 
-class EffectFrameImpl
+class KWIN_EXPORT EffectFrameImpl
     : public QObject, public EffectFrame
 {
     Q_OBJECT

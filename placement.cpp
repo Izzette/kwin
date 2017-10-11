@@ -607,9 +607,7 @@ void Placement::placeMaximizing(AbstractClient* c, QRect& area, Policy nextPlace
             c->maximize(MaximizeFull);
         else { // if the geometry doesn't match default maximize area (xinerama case?),
             // it's probably better to use the given area
-            if (Client *client = qobject_cast<Client*>(c)) {
-                client->setGeometry(area);
-            }
+            c->setGeometry(area);
         }
     } else {
         c->resizeWithChecks(c->maxSize().boundedTo(area.size()));
@@ -626,7 +624,7 @@ void Placement::cascadeDesktop()
     // TODO: make area const once placeFoo methods are fixed to take a const QRect&
     QRect area = ws->clientArea(PlacementArea, QPoint(0, 0), desktop);
     foreach (Toplevel *toplevel, ws->stackingOrder()) {
-        Client *client = qobject_cast<Client*>(toplevel);
+        auto client = qobject_cast<AbstractClient*>(toplevel);
         if (!client ||
                 (!client->isOnCurrentDesktop()) ||
                 (client->isMinimized())         ||
@@ -639,9 +637,9 @@ void Placement::cascadeDesktop()
 
 void Placement::unclutterDesktop()
 {
-    const ClientList &clients = Workspace::self()->clientList();
+    const auto &clients = Workspace::self()->allClientList();
     for (int i = clients.size() - 1; i >= 0; i--) {
-        Client *client = clients.at(i);
+        auto client = clients.at(i);
         if ((!client->isOnCurrentDesktop()) ||
                 (client->isMinimized())     ||
                 (client->isOnAllDesktops()) ||
@@ -841,69 +839,13 @@ void AbstractClient::shrinkVertical()
     }
 }
 
-
-void Workspace::slotWindowQuickTileLeft()
-{
-    if (!active_client)
-        return;
-
-    active_client->setQuickTileMode(Client::QuickTileLeft, true);
-}
-
-void Workspace::slotWindowQuickTileRight()
-{
-    if (!active_client)
-        return;
-
-    active_client->setQuickTileMode(Client::QuickTileRight, true);
-}
-
-void Workspace::slotWindowQuickTileTop()
-{
-    if (!active_client)
-        return;
-
-    active_client->setQuickTileMode(Client::QuickTileTop, true);
-}
-
-void Workspace::slotWindowQuickTileBottom()
-{
-    if (!active_client)
-        return;
-
-    active_client->setQuickTileMode(Client::QuickTileBottom, true);
-}
-
-void Workspace::slotWindowQuickTileTopLeft()
+void Workspace::quickTileWindow(QuickTileMode mode)
 {
     if (!active_client) {
         return;
     }
-    active_client->setQuickTileMode(Client::QuickTileTop|Client::QuickTileLeft, true);
-}
 
-void Workspace::slotWindowQuickTileTopRight()
-{
-    if (!active_client) {
-        return;
-    }
-    active_client->setQuickTileMode(Client::QuickTileTop|Client::QuickTileRight, true);
-}
-
-void Workspace::slotWindowQuickTileBottomLeft()
-{
-    if (!active_client) {
-        return;
-    }
-    active_client->setQuickTileMode(Client::QuickTileBottom|Client::QuickTileLeft, true);
-}
-
-void Workspace::slotWindowQuickTileBottomRight()
-{
-    if (!active_client) {
-        return;
-    }
-    active_client->setQuickTileMode(Client::QuickTileBottom|Client::QuickTileRight, true);
+    active_client->setQuickTileMode(mode, true);
 }
 
 int Workspace::packPositionLeft(const AbstractClient* cl, int oldx, bool left_edge) const

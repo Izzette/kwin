@@ -5,6 +5,10 @@ set(X11PLATFORM_SOURCES
     x11_platform.cpp
     screens_xrandr.cpp
     windowselector.cpp
+    overlaywindow_x11.cpp
+    screenedges_filter.cpp
+    non_composited_outline.cpp
+    x11_decoration_renderer.cpp
 )
 
 if(X11_Xinput_FOUND)
@@ -12,11 +16,11 @@ if(X11_Xinput_FOUND)
 endif()
 
 if(HAVE_EPOXY_GLX)
-    set(X11PLATFORM_SOURCES ${X11PLATFORM_SOURCES} glxbackend.cpp)
+    set(X11PLATFORM_SOURCES ${X11PLATFORM_SOURCES} glxbackend.cpp glx_context_attribute_builder.cpp)
 endif()
 
 add_library(KWinX11Platform MODULE ${X11PLATFORM_SOURCES})
-target_link_libraries(KWinX11Platform eglx11common kwin Qt5::X11Extras XCB::CURSOR)
+target_link_libraries(KWinX11Platform eglx11common kwin kwinxrenderutils Qt5::X11Extras XCB::CURSOR)
 if(X11_Xinput_FOUND)
     target_link_libraries(KWinX11Platform ${X11_Xinput_LIB})
 endif()

@@ -28,12 +28,14 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "workspace.h"
 #include "virtualdesktops.h"
 #include "workspace.h"
+#include "screens.h"
 #include "decorations/decorationbridge.h"
 #include "decorations/decoratedclient.h"
 #include <KDecoration2/Decoration>
 #include <KDecoration2/DecoratedClient>
 
 #include <KWayland/Client/surface.h>
+#include <KWayland/Server/display.h>
 #include <KWayland/Server/clientconnection.h>
 #include <KWayland/Server/seat_interface.h>
 #include <KWayland/Server/shell_interface.h>
@@ -102,12 +104,19 @@ template <class T>
 void ShellClient::initSurface(T *shellSurface)
 {
     m_caption = shellSurface->title().simplified();
-    connect(shellSurface, &T::titleChanged, this, &ShellClient::captionChanged);
+    // delay till end of init
+    QTimer::singleShot(0, this, &ShellClient::updateCaption);
     connect(shellSurface, &T::destroyed, this, &ShellClient::destroyClient);
     connect(shellSurface, &T::titleChanged, this,
         [this] (const QString &s) {
+            const auto oldSuffix = m_captionSuffix;
             m_caption = s.simplified();
-            emit captionChanged();
+            updateCaption();
+            if (m_captionSuffix == oldSuffix) {
+                // don't emit caption change twice
+                // it already got emitted by the changing suffix
+                emit captionChanged();
+            }
         }
     );
     connect(shellSurface, &T::moveRequested, this,
@@ -173,6 +182,9 @@ void ShellClient::initSurface(T *shellSurface)
     connect(shellSurface, &T::fullscreenChanged, this, &ShellClient::clientFullScreenChanged);
 
     connect(shellSurface, &T::transientForChanged, this, &ShellClient::setTransient);
+
+    connect(this, &ShellClient::geometryChanged, this, &ShellClient::updateClientOutputs);
+    connect(screens(), &Screens::changed, this, &ShellClient::updateClientOutputs);
 }
 
 void ShellClient::init()
@@ -216,8 +228,52 @@ void ShellClient::init()
     connect(s, &SurfaceInterface::destroyed, this, &ShellClient::destroyClient);
     if (m_shellSurface) {
         initSurface(m_shellSurface);
+        auto setPopup = [this] {
+            // TODO: verify grab serial
+            m_hasPopupGrab = m_shellSurface->isPopup();
+        };
+        connect(m_shellSurface, &ShellSurfaceInterface::popupChanged, this, setPopup);
+        setPopup();
     } else if (m_xdgShellSurface) {
         initSurface(m_xdgShellSurface);
+
+        auto global = static_cast<XdgShellInterface *>(m_xdgShellSurface->global());
+        connect(global, &XdgShellInterface::pingDelayed,
+            this, [this](qint32 serial) {
+                auto it = m_pingSerials.find(serial);
+                if (it != m_pingSerials.end()) {
+                    qCDebug(KWIN_CORE) << "First ping timeout:" << caption();
+                    setUnresponsive(true);
+                }
+            });
+
+        connect(global, &XdgShellInterface::pingTimeout,
+            this, [this](qint32 serial) {
+                auto it = m_pingSerials.find(serial);
+                if (it != m_pingSerials.end()) {
+                    if (it.value() == PingReason::CloseWindow) {
+                        qCDebug(KWIN_CORE) << "Final ping timeout on a close attempt, asking to kill:" << caption();
+
+                        //for internal windows, killing the window will delete this
+                        QPointer<QObject> guard(this);
+                        killWindow();
+                        if (!guard) {
+                            return;
+                        }
+                    }
+                    m_pingSerials.erase(it);
+                }
+            });
+
+        connect(global, &XdgShellInterface::pongReceived,
+            this, [this](qint32 serial){
+                auto it = m_pingSerials.find(serial);
+                if (it != m_pingSerials.end()) {
+                    setUnresponsive(false);
+                    m_pingSerials.erase(it);
+                }
+            });
+
         connect(m_xdgShellSurface, &XdgShellSurfaceInterface::windowMenuRequested, this,
             [this] (SeatInterface *seat, quint32 serial, const QPoint &surfacePos) {
                 // TODO: check serial on seat
@@ -237,10 +293,21 @@ void ShellClient::init()
             }
             m_xdgShellSurface->configure(xdgSurfaceStates());
         };
+        configure();
         connect(this, &AbstractClient::activeChanged, this, configure);
         connect(this, &AbstractClient::clientStartUserMovedResized, this, configure);
         connect(this, &AbstractClient::clientFinishUserMovedResized, this, configure);
     } else if (m_xdgShellPopup) {
+        connect(m_xdgShellPopup, &XdgShellPopupInterface::grabRequested, this, [this](SeatInterface *seat, quint32 serial) {
+            Q_UNUSED(seat)
+            Q_UNUSED(serial)
+            //TODO - should check the parent had focus
+            m_hasPopupGrab = true;
+        });
+
+        QRect position = QRect(m_xdgShellPopup->transientOffset(), m_xdgShellPopup->initialSize());
+        m_xdgShellPopup->configure(position);
+
         connect(m_xdgShellPopup, &XdgShellPopupInterface::destroyed, this, &ShellClient::destroyClient);
     }
 
@@ -531,7 +598,8 @@ void ShellClient::syncGeometryToInternalWindow()
     const QRect windowRect = QRect(geom.topLeft() + QPoint(borderLeft(), borderTop()),
                                     geom.size() - QSize(borderLeft() + borderRight(), borderTop() + borderBottom()));
     if (m_internalWindow->geometry() != windowRect) {
-        m_internalWindow->setGeometry(windowRect);
+        // delay to end of cycle to prevent freeze, see BUG 384441
+        QTimer::singleShot(0, m_internalWindow, std::bind(static_cast<void (QWindow::*)(const QRect&)>(&QWindow::setGeometry), m_internalWindow, windowRect));
     }
 }
 
@@ -554,23 +622,32 @@ void ShellClient::blockActivityUpdates(bool b)
     Q_UNUSED(b)
 }
 
-QString ShellClient::caption(bool full, bool stripped) const
+void ShellClient::updateCaption()
 {
-    Q_UNUSED(full)
-    Q_UNUSED(stripped)
-    return m_caption;
+    const QString oldSuffix = m_captionSuffix;
+    const auto shortcut = shortcutCaptionSuffix();
+    m_captionSuffix = shortcut;
+    if ((!isSpecialWindow() || isToolbar()) && findClientWithSameCaption()) {
+        int i = 2;
+        do {
+            m_captionSuffix = shortcut + QLatin1String(" <") + QString::number(i) + QLatin1Char('>');
+            i++;
+        } while (findClientWithSameCaption());
+    }
+    if (m_captionSuffix != oldSuffix) {
+        emit captionChanged();
+    }
 }
 
 void ShellClient::closeWindow()
 {
     if (m_xdgShellSurface && isCloseable()) {
         m_xdgShellSurface->close();
-        return;
-    }
-    if (m_qtExtendedSurface && isCloseable()) {
+        const qint32 pingSerial = static_cast<XdgShellInterface *>(m_xdgShellSurface->global())->ping(m_xdgShellSurface);
+        m_pingSerials.insert(pingSerial, PingReason::CloseWindow);
+    } else if (m_qtExtendedSurface && isCloseable()) {
         m_qtExtendedSurface->close();
-    }
-    if (m_internalWindow) {
+    } else if (m_internalWindow) {
         m_internalWindow->hide();
     }
 }
@@ -728,7 +805,7 @@ void ShellClient::changeMaximize(bool horizontal, bool vertical, bool adjust)
 
     // Conditional quick tiling exit points
     const auto oldQuickTileMode = quickTileMode();
-    if (quickTileMode() != QuickTileNone) {
+    if (quickTileMode() != QuickTileMode(QuickTileFlag::None)) {
         if (oldMode == MaximizeFull &&
                 !clientArea.contains(m_geomMaximizeRestore.center())) {
             // Not restoring on the same screen
@@ -737,7 +814,7 @@ void ShellClient::changeMaximize(bool horizontal, bool vertical, bool adjust)
         } else if ((oldMode == MaximizeVertical && m_maximizeMode == MaximizeRestore) ||
                   (oldMode == MaximizeFull && m_maximizeMode == MaximizeHorizontal)) {
             // Modifying geometry of a tiled window
-            updateQuickTileMode(QuickTileNone); // Exit quick tile mode without restoring geometry
+            updateQuickTileMode(QuickTileFlag::None); // Exit quick tile mode without restoring geometry
         }
     }
 
@@ -746,9 +823,9 @@ void ShellClient::changeMaximize(bool horizontal, bool vertical, bool adjust)
         m_geomMaximizeRestore = geometry();
         // TODO: Client has more checks
         if (options->electricBorderMaximize()) {
-            updateQuickTileMode(QuickTileMaximize);
+            updateQuickTileMode(QuickTileFlag::Maximize);
         } else {
-            updateQuickTileMode(QuickTileNone);
+            updateQuickTileMode(QuickTileFlag::None);
         }
         if (quickTileMode() != oldQuickTileMode) {
             emit quickTileModeChanged();
@@ -757,7 +834,7 @@ void ShellClient::changeMaximize(bool horizontal, bool vertical, bool adjust)
         workspace()->raiseClient(this);
     } else {
         if (m_maximizeMode == MaximizeRestore) {
-            updateQuickTileMode(QuickTileNone);
+            updateQuickTileMode(QuickTileFlag::None);
         }
         if (quickTileMode() != oldQuickTileMode) {
             emit quickTileModeChanged();
@@ -820,20 +897,13 @@ void ShellClient::setOnAllActivities(bool set)
     Q_UNUSED(set)
 }
 
-void ShellClient::setShortcut(const QString &cut)
-{
-    Q_UNUSED(cut)
-}
-
-const QKeySequence &ShellClient::shortcut() const
-{
-    static QKeySequence seq;
-    return seq;
-}
-
 void ShellClient::takeFocus()
 {
     if (rules()->checkAcceptFocus(wantsInput())) {
+        if (m_xdgShellSurface) {
+            const qint32 pingSerial = static_cast<XdgShellInterface *>(m_xdgShellSurface->global())->ping(m_xdgShellSurface);
+            m_pingSerials.insert(pingSerial, PingReason::FocusWindow);
+        }
         setActive(true);
     }
 
@@ -980,6 +1050,11 @@ void ShellClient::updateInternalWindowGeometry()
                         m_internalWindow->geometry().size() + QSize(borderLeft() + borderRight(), borderTop() + borderBottom())));
 }
 
+pid_t ShellClient::pid() const
+{
+    return surface()->client()->processId();
+}
+
 bool ShellClient::isInternal() const
 {
     return m_internal;
@@ -1015,6 +1090,15 @@ void ShellClient::requestGeometry(const QRect &rect)
     if (m_xdgShellSurface) {
         m_xdgShellSurface->configure(xdgSurfaceStates(), size);
     }
+    if (m_xdgShellPopup) {
+        auto parent = transientFor();
+        if (parent) {
+            const QPoint globalClientContentPos = parent->geometry().topLeft() + parent->clientPos();
+            const QPoint relativeOffset = rect.topLeft() -globalClientContentPos;
+            m_xdgShellPopup->configure(QRect(relativeOffset, rect.size()));
+        }
+    }
+
     m_blockedRequestGeometry = QRect();
     if (m_internal) {
         m_internalWindow->setGeometry(QRect(rect.topLeft() + QPoint(borderLeft(), borderTop()), rect.size() - QSize(borderLeft() + borderRight(), borderTop() + borderBottom())));
@@ -1397,6 +1481,9 @@ bool ShellClient::shouldExposeToWindowManagement()
     if (isLockScreen()) {
         return false;
     }
+    if (m_xdgShellPopup) {
+        return false;
+    }
     if (m_shellSurface) {
         if (m_shellSurface->isTransient() && !m_shellSurface->acceptsKeyboardFocus()) {
             return false;
@@ -1484,7 +1571,7 @@ void ShellClient::killWindow()
         return;
     }
     auto c = surface()->client();
-    if (c->processId() == getpid()) {
+    if (c->processId() == getpid() || c->processId() == 0) {
         c->destroy();
         return;
     }
@@ -1503,11 +1590,7 @@ void ShellClient::updateApplicationMenu()
 
 bool ShellClient::hasPopupGrab() const
 {
-    if (m_shellSurface) {
-        // TODO: verify grab serial
-        return m_shellSurface->isPopup();
-    }
-    return false;
+    return m_hasPopupGrab;
 }
 
 void ShellClient::popupDone()
@@ -1515,6 +1598,22 @@ void ShellClient::popupDone()
     if (m_shellSurface) {
         m_shellSurface->popupDone();
     }
+    if (m_xdgShellPopup) {
+        m_xdgShellPopup->popupDone();
+    }
+}
+
+void ShellClient::updateClientOutputs()
+{
+    QVector<OutputInterface*> clientOutputs;
+    const auto outputs = waylandServer()->display()->outputs();
+    for (OutputInterface* output: qAsConst(outputs)) {
+        const QRect outputGeom(output->globalPosition(), output->pixelSize() / output->scale());
+        if (geometry().intersects(outputGeom)) {
+            clientOutputs << output;
+        }
+    }
+    surface()->setOutputs(clientOutputs);
 }
 
 }

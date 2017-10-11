@@ -54,6 +54,7 @@ set( testClientMachine_SRCS
      ../client_machine.cpp
 )
 add_executable( testClientMachine ${testClientMachine_SRCS} )
+set_target_properties(testClientMachine PROPERTIES COMPILE_DEFINITIONS "NO_NONE_WINDOW")
 
 target_link_libraries( testClientMachine
                        Qt5::Concurrent
@@ -90,6 +91,7 @@ ecm_mark_as_test(testXcbWrapper)
 
 if (XCB_ICCCM_FOUND)
     add_executable( testXcbSizeHints test_xcb_size_hints.cpp )
+    set_target_properties(testXcbSizeHints PROPERTIES COMPILE_DEFINITIONS "NO_NONE_WINDOW")
     target_link_libraries( testXcbSizeHints
                            Qt5::Test
                            Qt5::X11Extras
@@ -130,6 +132,7 @@ set( testBuiltInEffectLoader_SRCS
     ../effectloader.cpp
 )
 add_executable( testBuiltInEffectLoader ${testBuiltInEffectLoader_SRCS})
+set_target_properties(testBuiltInEffectLoader PROPERTIES COMPILE_DEFINITIONS "NO_NONE_WINDOW")
 
 target_link_libraries(testBuiltInEffectLoader
     Qt5::Concurrent
@@ -149,12 +152,17 @@ ecm_mark_as_test(testBuiltInEffectLoader)
 include_directories(${KWIN_SOURCE_DIR})
 set( testScriptedEffectLoader_SRCS
     test_scripted_effectloader.cpp
+    mock_abstract_client.cpp
     mock_effectshandler.cpp
+    mock_screens.cpp
+    mock_workspace.cpp
     ../effectloader.cpp
     ../scripting/scriptedeffect.cpp
     ../scripting/scriptingutils.cpp
     ../scripting/scripting_logging.cpp
+    ../screens.cpp
 )
+kconfig_add_kcfg_files(testScriptedEffectLoader_SRCS ../settings.kcfgc)
 add_executable( testScriptedEffectLoader ${testScriptedEffectLoader_SRCS})
 
 target_link_libraries(testScriptedEffectLoader
@@ -292,6 +300,7 @@ kconfig_add_kcfg_files(testScreenEdges_SRCS ../settings.kcfgc)
 qt5_add_dbus_interface( testScreenEdges_SRCS ${CMAKE_CURRENT_SOURCE_DIR}/../org.freedesktop.ScreenSaver.xml screenlocker_interface)
 
 add_executable( testScreenEdges ${testScreenEdges_SRCS})
+set_target_properties(testScreenEdges PROPERTIES COMPILE_DEFINITIONS "NO_NONE_WINDOW")
 target_include_directories(testScreenEdges BEFORE PRIVATE ./)
 target_link_libraries(testScreenEdges
     Qt5::DBus
@@ -355,9 +364,42 @@ ecm_mark_as_test(testGestures)
 # Test X11 TimestampUpdate
 ########################################################
 add_executable(testX11TimestampUpdate test_x11_timestamp_update.cpp)
+target_compile_definitions(testX11TimestampUpdate PRIVATE KWINBACKENDPATH="${CMAKE_BINARY_DIR}/plugins/platforms/x11/standalone/KWinX11Platform.so")
 target_link_libraries(testX11TimestampUpdate
     Qt5::Test
+    KF5::CoreAddons
     kwin
 )
 add_test(kwin-testX11TimestampUpdate testX11TimestampUpdate)
 ecm_mark_as_test(testX11TimestampUpdate)
+
+set(testOpenGLContextAttributeBuilder_SRCS
+    opengl_context_attribute_builder_test.cpp
+    ../abstract_opengl_context_attribute_builder.cpp
+    ../egl_context_attribute_builder.cpp
+)
+
+if(HAVE_EPOXY_GLX)
+    set(testOpenGLContextAttributeBuilder_SRCS ${testOpenGLContextAttributeBuilder_SRCS} ../plugins/platforms/x11/standalone/glx_context_attribute_builder.cpp)
+endif()
+add_executable(testOpenGLContextAttributeBuilder ${testOpenGLContextAttributeBuilder_SRCS})
+target_link_libraries(testOpenGLContextAttributeBuilder Qt5::Test)
+add_test(kwin-testOpenGLContextAttributeBuilder testOpenGLContextAttributeBuilder)
+ecm_mark_as_test(testOpenGLContextAttributeBuilder)
+
+set(testXkb_SRCS
+    test_xkb.cpp
+    ../xkb.cpp
+)
+add_executable(testXkb ${testXkb_SRCS})
+target_link_libraries(testXkb
+    Qt5::Test
+    Qt5::Gui
+    Qt5::Widgets
+    KF5::ConfigCore
+    KF5::WindowSystem
+    KF5::WaylandServer
+    XKB::XKB
+)
+add_test(kwin-testXkb testXkb)
+ecm_mark_as_test(testXkb)

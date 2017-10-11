@@ -160,7 +160,7 @@ public:
     virtual Scene::EffectFrame *createEffectFrame(EffectFrameImpl *frame);
     virtual Shadow *createShadow(Toplevel *toplevel);
     virtual void screenGeometryChanged(const QSize &size);
-    xcb_render_picture_t bufferPicture();
+    xcb_render_picture_t xrenderBufferPicture() const override;
     virtual OverlayWindow *overlayWindow() {
         return m_backend->overlayWindow();
     }
@@ -179,6 +179,7 @@ protected:
     virtual void paintBackground(QRegion region);
     virtual void paintGenericScreen(int mask, ScreenPaintData data);
     virtual void paintDesktop(int desktop, int mask, const QRegion &region, ScreenPaintData &data);
+    void paintCursor() override;
 private:
     explicit SceneXrender(XRenderBackend *backend, QObject *parent = nullptr);
     static ScreenPaintData screen_paint;
@@ -205,7 +206,6 @@ private:
     void setPictureFilter(xcb_render_picture_t pic, ImageFilterType filter);
     SceneXrender *m_scene;
     xcb_render_pictformat_t format;
-    double alpha_cached_opacity;
     QRegion transformed_shape;
     static QRect temp_visibleRect;
     static XRenderPicture *s_tempPicture;
@@ -253,7 +253,7 @@ private:
 };
 
 inline
-xcb_render_picture_t SceneXrender::bufferPicture()
+xcb_render_picture_t SceneXrender::xrenderBufferPicture() const
 {
     return m_backend->buffer();
 }
@@ -339,6 +339,19 @@ private:
     xcb_pixmap_t m_pixmaps[int(DecorationPart::Count)];
     xcb_gcontext_t m_gc;
     XRenderPicture* m_pictures[int(DecorationPart::Count)];
+};
+
+class KWIN_EXPORT XRenderFactory : public SceneFactory
+{
+    Q_OBJECT
+    Q_INTERFACES(KWin::SceneFactory)
+    Q_PLUGIN_METADATA(IID "org.kde.kwin.Scene" FILE "xrender.json")
+
+public:
+    explicit XRenderFactory(QObject *parent = nullptr);
+    ~XRenderFactory() override;
+
+    Scene *create(QObject *parent = nullptr) const override;
 };
 
 } // namespace

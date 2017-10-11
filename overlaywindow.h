@@ -30,28 +30,22 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 namespace KWin {
 class KWIN_EXPORT OverlayWindow {
 public:
-    OverlayWindow();
-    ~OverlayWindow();
+    virtual ~OverlayWindow();
     /// Creates XComposite overlay window, call initOverlay() afterwards
-    bool create();
+    virtual bool create() = 0;
     /// Init overlay and the destination window in it
-    void setup(xcb_window_t window);
-    void show();
-    void hide(); // hides and resets overlay window
-    void setShape(const QRegion& reg);
-    void resize(const QSize &size);
+    virtual void setup(xcb_window_t window) = 0;
+    virtual void show() = 0;
+    virtual void hide() = 0; // hides and resets overlay window
+    virtual void setShape(const QRegion& reg) = 0;
+    virtual void resize(const QSize &size) = 0;
     /// Destroys XComposite overlay window
-    void destroy();
-    xcb_window_t window() const;
-    bool isVisible() const;
-    void setVisibility(bool visible);
-private:
-    void setNoneBackgroundPixmap(xcb_window_t window);
-    void setupInputShape(xcb_window_t window);
-    bool m_visible;
-    bool m_shown; // For showOverlay()
-    QRegion m_shape;
-    xcb_window_t m_window;
+    virtual void destroy() = 0;
+    virtual xcb_window_t window() const = 0;
+    virtual bool isVisible() const = 0;
+    virtual void setVisibility(bool visible) = 0;
+protected:
+    OverlayWindow();
 };
 } // namespace
 

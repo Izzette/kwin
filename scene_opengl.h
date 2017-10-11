@@ -82,6 +82,8 @@ public:
         return m_backend;
     }
 
+    QVector<QByteArray> openGLPlatformInterfaceExtensions() const override;
+
     /**
      * Copy a region of pixels from the current read to the current draw buffer
      */
@@ -137,9 +139,7 @@ protected:
     virtual Scene::Window *createWindow(Toplevel *t);
     virtual void finalDrawWindow(EffectWindowImpl* w, int mask, QRegion region, WindowPaintData& data);
     virtual void updateProjectionMatrix() override;
-
-private Q_SLOTS:
-    void resetLanczosFilter();
+    void paintCursor() override;
 
 private:
     void performPaintWindow(EffectWindowImpl* w, int mask, QRegion region, WindowPaintData& data);
@@ -147,6 +147,7 @@ private:
 
 private:
     LanczosFilter *m_lanczosFilter;
+    QScopedPointer<GLTexture> m_cursorTexture;
     QMatrix4x4 m_projectionMatrix;
     QMatrix4x4 m_screenProjectionMatrix;
     GLuint vao;

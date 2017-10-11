@@ -40,12 +40,21 @@ namespace KWin
 {
 
 class Edge;
+class OverlayWindow;
 class OpenGLBackend;
+class Outline;
+class OutlineVisual;
 class QPainterBackend;
 class Screens;
 class ScreenEdges;
 class Toplevel;
 class WaylandCursorTheme;
+
+namespace Decoration
+{
+class Renderer;
+class DecoratedClientImpl;
+}
 
 class KWIN_EXPORT Platform : public QObject
 {
@@ -81,16 +90,42 @@ public:
     /**
      * The EGLContext used by the compositing scene.
      **/
-    virtual EGLContext sceneEglContext() const;
+    virtual EGLContext sceneEglContext() const {
+        return m_context;
+    }
+    /**
+     * Sets the @p context used by the compositing scene.
+     **/
+    void setSceneEglContext(EGLContext context) {
+        m_context = context;
+    }
     /**
      * The first (in case of multiple) EGLSurface used by the compositing scene.
      **/
-    EGLSurface sceneEglSurface() const;
+    EGLSurface sceneEglSurface() const {
+        return m_surface;
+    }
+    /**
+     * Sets the first @p surface used by the compositing scene.
+     * @see sceneEglSurface
+     **/
+    void setSceneEglSurface(EGLSurface surface) {
+        m_surface = surface;
+    }
 
     /**
      * The EglConfig used by the compositing scene.
      **/
-    EGLConfig sceneEglConfig() const;
+    EGLConfig sceneEglConfig() const {
+        return m_eglConfig;
+    }
+    /**
+     * Sets the @p config used by the compositing scene.
+     * @see sceneEglConfig
+     **/
+    void setSceneEglConfig(EGLConfig config) {
+        m_eglConfig = config;
+    }
 
     /**
      * Implementing subclasses should provide a size in case the backend represents
@@ -301,6 +336,40 @@ public:
         m_initialOutputScale = scale;
     }
 
+    /**
+     * Creates the OverlayWindow required for X11 based compositors.
+     * Default implementation returns @c nullptr.
+     **/
+    virtual OverlayWindow *createOverlayWindow();
+
+    /**
+     * Allows a platform to update the X11 timestamp.
+     * Mostly for the X11 standalone platform to interact with QX11Info.
+     *
+     * Default implementation does nothing. This means code relying on the X timestamp being up to date,
+     * might not be working. E.g. synced X11 window resizing
+     **/
+    virtual void updateXTime();
+
+    /**
+     * Creates the OutlineVisual for the given @p outline.
+     * Default implementation creates an OutlineVisual suited for composited usage.
+     **/
+    virtual OutlineVisual *createOutline(Outline *outline);
+
+    /**
+     * Creates the Decoration::Renderer for the given @p client.
+     *
+     * The default implementation creates a Renderer suited for the Compositor, @c nullptr if there is no Compositor.
+     **/
+    virtual Decoration::Renderer *createDecorationRenderer(Decoration::DecoratedClientImpl *client);
+
+    /**
+     * Platform specific way to invert the screen.
+     * Default implementation invokes the invert effect
+     **/
+    virtual void invertScreen();
+
 public Q_SLOTS:
     void pointerMotion(const QPointF &position, quint32 time);
     void pointerButtonPressed(quint32 button, quint32 time);
@@ -393,6 +462,9 @@ private:
     int m_initialOutputCount = 1;
     qreal m_initialOutputScale = 1;
     EGLDisplay m_eglDisplay;
+    EGLConfig m_eglConfig = nullptr;
+    EGLContext m_context = EGL_NO_CONTEXT;
+    EGLSurface m_surface = EGL_NO_SURFACE;
     int m_hideCursorCounter = 0;
 };
 

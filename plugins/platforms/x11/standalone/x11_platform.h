@@ -29,6 +29,7 @@ namespace KWin
 {
 class XInputIntegration;
 class WindowSelector;
+class X11EventFilter;
 
 class KWIN_EXPORT X11StandalonePlatform : public Platform
 {
@@ -55,6 +56,14 @@ public:
 
     void setupActionForGlobalAccel(QAction *action) override;
 
+    OverlayWindow *createOverlayWindow() override;
+
+    void updateXTime() override;
+    OutlineVisual *createOutline(Outline *outline) override;
+    Decoration::Renderer *createDecorationRenderer(Decoration::DecoratedClientImpl *client) override;
+
+    void invertScreen() override;
+
 protected:
     void doHideCursor() override;
     void doShowCursor() override;
@@ -76,6 +85,7 @@ private:
     QTimer *m_openGLFreezeProtection = nullptr;
     Display *m_x11Display;
     QScopedPointer<WindowSelector> m_windowSelector;
+    QScopedPointer<X11EventFilter> m_screenEdgesFilter;
 
 };
 

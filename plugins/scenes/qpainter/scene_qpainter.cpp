@@ -42,49 +42,6 @@ namespace KWin
 {
 
 //****************************************
-// QPainterBackend
-//****************************************
-QPainterBackend::QPainterBackend()
-    : m_failed(false)
-{
-}
-
-QPainterBackend::~QPainterBackend()
-{
-}
-
-OverlayWindow* QPainterBackend::overlayWindow()
-{
-    return NULL;
-}
-
-void QPainterBackend::showOverlay()
-{
-}
-
-void QPainterBackend::screenGeometryChanged(const QSize &size)
-{
-    Q_UNUSED(size)
-}
-
-void QPainterBackend::setFailed(const QString &reason)
-{
-    qCWarning(KWIN_CORE) << "Creating the XRender backend failed: " << reason;
-    m_failed = true;
-}
-
-bool QPainterBackend::perScreenRendering() const
-{
-    return false;
-}
-
-QImage *QPainterBackend::bufferForScreen(int screenId)
-{
-    Q_UNUSED(screenId)
-    return buffer();
-}
-
-//****************************************
 // SceneQPainter
 //****************************************
 SceneQPainter *SceneQPainter::createScene(QObject *parent)
@@ -233,6 +190,11 @@ void SceneQPainter::screenGeometryChanged(const QSize &size)
     m_backend->screenGeometryChanged(size);
 }
 
+QImage *SceneQPainter::qpainterRenderBuffer() const
+{
+    return m_backend->buffer();
+}
+
 //****************************************
 // SceneQPainter::Window
 //****************************************
@@ -281,7 +243,7 @@ void SceneQPainter::Window::performPaint(int mask, QRegion region, WindowPaintDa
         toplevel->resetDamage();
     }
 
-    QPainter *scenePainter = m_scene->painter();
+    QPainter *scenePainter = m_scene->scenePainter();
     QPainter *painter = scenePainter;
     painter->save();
     painter->setClipRegion(region);
@@ -310,7 +272,12 @@ void SceneQPainter::Window::performPaint(int mask, QRegion region, WindowPaintDa
 
     // render content
     const QRect target = QRect(toplevel->clientPos(), toplevel->clientSize());
-    const QRect src = QRect(toplevel->clientPos() + toplevel->clientContentPos(), pixmap->image().size());
+    QSize srcSize = pixmap->image().size();
+    if (pixmap->surface() && pixmap->surface()->scale() == 1 && srcSize != toplevel->clientSize()) {
+        // special case for XWayland windows
+        srcSize = toplevel->clientSize();
+    }
+    const QRect src = QRect(toplevel->clientPos() + toplevel->clientContentPos(), srcSize);
     painter->drawImage(target, pixmap->image(), src);
 
     // render subsurfaces
@@ -518,7 +485,7 @@ void QPainterEffectFrame::render(QRegion region, double opacity, double frameOpa
     if (m_effectFrame->geometry().isEmpty()) {
         return; // Nothing to display
     }
-    QPainter *painter = m_scene->painter();
+    QPainter *painter = m_scene->scenePainter();
 
 
     // Render the actual frame
@@ -676,6 +643,24 @@ void SceneQPainterDecorationRenderer::reparent(Deleted *deleted)
 {
     render();
     Renderer::reparent(deleted);
+}
+
+
+QPainterFactory::QPainterFactory(QObject *parent)
+    : SceneFactory(parent)
+{
+}
+
+QPainterFactory::~QPainterFactory() = default;
+
+Scene *QPainterFactory::create(QObject *parent) const
+{
+    auto s = SceneQPainter::createScene(parent);
+    if (s && s->initFailed()) {
+        delete s;
+        s = nullptr;
+    }
+    return s;
 }
 
 } // KWin

@@ -23,7 +23,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "effectloader.h"
 #include "cursor.h"
 #include "platform.h"
-#include "scene_qpainter.h"
 #include "shell_client.h"
 #include "wayland_server.h"
 #include "workspace.h"
@@ -120,6 +119,7 @@ void FadeTest::testWindowCloseAfterWindowHidden_data()
 
     QTest::newRow("wlShell") << Test::ShellSurfaceType::WlShell;
     QTest::newRow("xdgShellV5") << Test::ShellSurfaceType::XdgShellV5;
+    QTest::newRow("xdgShellV6") << Test::ShellSurfaceType::XdgShellV6;
 }
 
 void FadeTest::testWindowCloseAfterWindowHidden()

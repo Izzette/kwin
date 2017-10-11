@@ -64,6 +64,8 @@ private Q_SLOTS:
     void testLockedPointer();
     void testBreakConstrainedPointer_data();
     void testBreakConstrainedPointer();
+    void testCloseWindowWithLockedPointer_data();
+    void testCloseWindowWithLockedPointer();
 };
 
 void TestPointerConstraints::initTestCase()
@@ -127,6 +129,10 @@ void TestPointerConstraints::testConfinedPointer_data()
     QTest::newRow("XdgShellV5 - bottomRight") << Test::ShellSurfaceType::XdgShellV5 << bottomRight << 1  << 1;
     QTest::newRow("XdgShellV5 - topLeft")     << Test::ShellSurfaceType::XdgShellV5 << topLeft  << -1 << -1;
     QTest::newRow("XdgShellV5 - topRight")    << Test::ShellSurfaceType::XdgShellV5 << topRight << 1  << -1;
+    QTest::newRow("XdgShellV6 - bottomLeft")  << Test::ShellSurfaceType::XdgShellV6 << bottomLeft  << -1 << 1;
+    QTest::newRow("XdgShellV6 - bottomRight") << Test::ShellSurfaceType::XdgShellV6 << bottomRight << 1  << 1;
+    QTest::newRow("XdgShellV6 - topLeft")     << Test::ShellSurfaceType::XdgShellV6 << topLeft  << -1 << -1;
+    QTest::newRow("XdgShellV6 - topRight")    << Test::ShellSurfaceType::XdgShellV6 << topRight << 1  << -1;
 }
 
 void TestPointerConstraints::testConfinedPointer()
@@ -253,6 +259,7 @@ void TestPointerConstraints::testLockedPointer_data()
 
     QTest::newRow("wlShell") << Test::ShellSurfaceType::WlShell;
     QTest::newRow("xdgShellV5") << Test::ShellSurfaceType::XdgShellV5;
+    QTest::newRow("xdgShellV6") << Test::ShellSurfaceType::XdgShellV6;
 }
 
 void TestPointerConstraints::testLockedPointer()
@@ -303,6 +310,7 @@ void TestPointerConstraints::testBreakConstrainedPointer_data()
 
     QTest::newRow("wlShell") << Test::ShellSurfaceType::WlShell;
     QTest::newRow("xdgShellV5") << Test::ShellSurfaceType::XdgShellV5;
+    QTest::newRow("xdgShellV6") << Test::ShellSurfaceType::XdgShellV6;
 }
 
 void TestPointerConstraints::testBreakConstrainedPointer()
@@ -383,6 +391,48 @@ void TestPointerConstraints::testBreakConstrainedPointer()
     kwinApp()->platform()->keyboardKeyPressed(KEY_ESC, timestamp++);
     QVERIFY(unlockedSpy.wait());
     kwinApp()->platform()->keyboardKeyReleased(KEY_ESC, timestamp++);
+}
+
+void TestPointerConstraints::testCloseWindowWithLockedPointer_data()
+{
+    QTest::addColumn<Test::ShellSurfaceType>("type");
+
+    QTest::newRow("wlShell") << Test::ShellSurfaceType::WlShell;
+    QTest::newRow("XdgShellV5") << Test::ShellSurfaceType::XdgShellV5;
+    QTest::newRow("XdgShellV6") << Test::ShellSurfaceType::XdgShellV6;
+}
+
+void TestPointerConstraints::testCloseWindowWithLockedPointer()
+{
+    // test case which verifies that the pointer gets unlocked when the window for it gets closed
+    QScopedPointer<Surface> surface(Test::createSurface());
+    QFETCH(Test::ShellSurfaceType, type);
+    QScopedPointer<QObject> shellSurface(Test::createShellSurface(type, surface.data()));
+    QScopedPointer<Pointer> pointer(Test::waylandSeat()->createPointer());
+    QScopedPointer<LockedPointer> lockedPointer(Test::waylandPointerConstraints()->lockPointer(surface.data(), pointer.data(), nullptr, PointerConstraints::LifeTime::OneShot));
+    QSignalSpy lockedSpy(lockedPointer.data(), &LockedPointer::locked);
+    QVERIFY(lockedSpy.isValid());
+    QSignalSpy unlockedSpy(lockedPointer.data(), &LockedPointer::unlocked);
+    QVERIFY(unlockedSpy.isValid());
+
+    // now map the window
+    auto c = Test::renderAndWaitForShown(surface.data(), QSize(100, 100), Qt::blue);
+    QVERIFY(c);
+    QVERIFY(!c->geometry().contains(KWin::Cursor::pos()));
+
+    // now let's lock
+    QCOMPARE(input()->pointer()->isConstrained(), false);
+    KWin::Cursor::setPos(c->geometry().center());
+    QCOMPARE(KWin::Cursor::pos(), c->geometry().center());
+    QCOMPARE(input()->pointer()->isConstrained(), true);
+    QVERIFY(lockedSpy.wait());
+
+    // close the window
+    shellSurface.reset();
+    surface.reset();
+    // this should result in unlocked
+    QVERIFY(unlockedSpy.wait());
+    QCOMPARE(input()->pointer()->isConstrained(), false);
 }
 
 WAYLANDTEST_MAIN(TestPointerConstraints)

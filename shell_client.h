@@ -37,6 +37,14 @@ class QtExtendedSurfaceInterface;
 namespace KWin
 {
 
+/**
+ * @brief The reason for which the server pinged a client surface
+ */
+enum class PingReason {
+    CloseWindow = 0,
+    FocusWindow
+};
+    
 class KWIN_EXPORT ShellClient : public AbstractClient
 {
     Q_OBJECT
@@ -63,7 +71,12 @@ public:
     }
 
     void blockActivityUpdates(bool b = true) override;
-    QString caption(bool full = true, bool stripped = false) const override;
+    QString captionNormal() const override {
+        return m_caption;
+    }
+    QString captionSuffix() const override {
+        return m_captionSuffix;
+    }
     void closeWindow() override;
     AbstractClient *findModal(bool allow_itself = false) override;
     bool isCloseable() const override;
@@ -89,8 +102,6 @@ public:
     void setNoBorder(bool set) override;
     void updateDecoration(bool check_workspace_pos, bool force = false) override;
     void setOnAllActivities(bool set) override;
-    void setShortcut(const QString &cut) override;
-    const QKeySequence &shortcut() const override;
     void takeFocus() override;
     void updateWindowRules(Rules::Types selection) override;
     bool userCanSetFullScreen() const override;
@@ -108,6 +119,15 @@ public:
     quint32 windowId() const override {
         return m_windowId;
     }
+
+    /**
+     * The process for this client.
+     * Note that processes started by kwin will share its process id.
+     * @since 5.11
+     * @returns the process if for this client.
+     **/
+    pid_t pid() const override;
+
     bool isInternal() const;
     bool isLockScreen() const override;
     bool isInputMethod() const override;
@@ -156,6 +176,7 @@ protected:
     bool acceptsFocus() const override;
     void doMinimize() override;
     void doMove(int x, int y) override;
+    void updateCaption() override;
 
 private Q_SLOTS:
     void clientFullScreenChanged(bool fullScreen);
@@ -177,6 +198,7 @@ private:
     void markAsMapped();
     void setTransient();
     bool shouldExposeToWindowManagement();
+    void updateClientOutputs();
     KWayland::Server::XdgShellSurfaceInterface::States xdgSurfaceStates() const;
     void updateShowOnScreenEdge();
     static void deleteClient(ShellClient *c);
@@ -204,6 +226,7 @@ private:
     bool m_transient = false;
     bool m_hidden = false;
     bool m_internal;
+    bool m_hasPopupGrab = false;
     qreal m_opacity = 1.0;
 
     class RequestGeometryBlocker {
@@ -229,6 +252,8 @@ private:
     int m_requestGeometryBlockCounter = 0;
     QRect m_blockedRequestGeometry;
     QString m_caption;
+    QString m_captionSuffix;
+    QHash<qint32, PingReason> m_pingSerials;
 
     bool m_compositingSetup = false;
 };

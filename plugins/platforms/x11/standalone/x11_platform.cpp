@@ -29,11 +29,19 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #if HAVE_X11_XINPUT
 #include "xinputintegration.h"
 #endif
+#include "abstract_client.h"
 #include "eglonxbackend.h"
 #include "keyboard_input.h"
 #include "logging.h"
 #include "screens_xrandr.h"
+#include "screenedges_filter.h"
 #include "options.h"
+#include "overlaywindow_x11.h"
+#include "non_composited_outline.h"
+#include "workspace.h"
+#include "x11_decoration_renderer.h"
+
+#include <kwinxrenderutils.h>
 
 #include <KConfigGroup>
 #include <KLocalizedString>
@@ -70,6 +78,7 @@ X11StandalonePlatform::~X11StandalonePlatform()
         m_openGLFreezeProtectionThread->wait();
         delete m_openGLFreezeProtectionThread;
     }
+    XRenderUtils::cleanup();
 }
 
 void X11StandalonePlatform::init()
@@ -78,6 +87,7 @@ void X11StandalonePlatform::init()
         emit initFailed();
         return;
     }
+    XRenderUtils::init(kwinApp()->x11Connection(), kwinApp()->x11RootWindow());
     setReady(true);
     emit screensQueried();
 }
@@ -97,6 +107,9 @@ OpenGLBackend *X11StandalonePlatform::createOpenGLBackend()
         } else {
             qCWarning(KWIN_X11STANDALONE) << "Glx not available, trying EGL instead.";
             // no break, needs fall-through
+#if (QT_VERSION >= QT_VERSION_CHECK(5, 8, 0))
+            Q_FALLTHROUGH();
+#endif
         }
 #endif
     case EglPlatformInterface:
@@ -109,6 +122,9 @@ OpenGLBackend *X11StandalonePlatform::createOpenGLBackend()
 
 Edge *X11StandalonePlatform::createScreenEdge(ScreenEdges *edges)
 {
+    if (m_screenEdgesFilter.isNull()) {
+        m_screenEdgesFilter.reset(new ScreenEdgesFilter);
+    }
     return new WindowBasedEdge(edges);
 }
 
@@ -211,6 +227,9 @@ void X11StandalonePlatform::createOpenGLSafePoint(OpenGLSafePoint safePoint)
         group.writeEntry(unsafeKey, true);
         group.sync();
         // Deliberately continue with PreFrame
+#if (QT_VERSION >= QT_VERSION_CHECK(5, 8, 0))
+        Q_FALLTHROUGH();
+#endif
     case OpenGLSafePoint::PreFrame:
         if (m_openGLFreezeProtectionThread == nullptr) {
             Q_ASSERT(m_openGLFreezeProtection == nullptr);
@@ -239,6 +258,9 @@ void X11StandalonePlatform::createOpenGLSafePoint(OpenGLSafePoint safePoint)
         group.writeEntry(unsafeKey, false);
         group.sync();
         // Deliberately continue with PostFrame
+#if (QT_VERSION >= QT_VERSION_CHECK(5, 8, 0))
+        Q_FALLTHROUGH();
+#endif
     case OpenGLSafePoint::PostFrame:
         QMetaObject::invokeMethod(m_openGLFreezeProtection, "stop", Qt::QueuedConnection);
         break;
@@ -298,6 +320,88 @@ void X11StandalonePlatform::setupActionForGlobalAccel(QAction *action)
             kwinApp()->setX11Time(t);
         }
     });
+}
+
+OverlayWindow *X11StandalonePlatform::createOverlayWindow()
+{
+    return new OverlayWindowX11();
+}
+
+/*
+ Updates xTime(). This used to simply fetch current timestamp from the server,
+ but that can cause xTime() to be newer than timestamp of events that are
+ still in our events queue, thus e.g. making XSetInputFocus() caused by such
+ event to be ignored. Therefore events queue is searched for first
+ event with timestamp, and extra PropertyNotify is generated in order to make
+ sure such event is found.
+*/
+void X11StandalonePlatform::updateXTime()
+{
+    // NOTE: QX11Info::getTimestamp does not yet search the event queue as the old
+    // solution did. This means there might be regressions currently. See the
+    // documentation above on how it should be done properly.
+    kwinApp()->setX11Time(QX11Info::getTimestamp(), Application::TimestampUpdate::Always);
+}
+
+OutlineVisual *X11StandalonePlatform::createOutline(Outline *outline)
+{
+    // first try composited Outline
+    auto ret = Platform::createOutline(outline);
+    if (!ret) {
+        ret = new NonCompositedOutlineVisual(outline);
+    }
+    return ret;
+}
+
+Decoration::Renderer *X11StandalonePlatform::createDecorationRenderer(Decoration::DecoratedClientImpl *client)
+{
+    auto renderer = Platform::createDecorationRenderer(client);
+    if (!renderer) {
+        renderer = new Decoration::X11Renderer(client);
+    }
+    return renderer;
+}
+
+void X11StandalonePlatform::invertScreen()
+{
+    using namespace Xcb::RandR;
+    bool succeeded = false;
+
+    if (Xcb::Extensions::self()->isRandrAvailable()) {
+        const auto active_client = workspace()->activeClient();
+        ScreenResources res((active_client && active_client->window() != XCB_WINDOW_NONE) ? active_client->window() : rootWindow());
+
+        if (!res.isNull()) {
+            for (int j = 0; j < res->num_crtcs; ++j) {
+                auto crtc = res.crtcs()[j];
+                CrtcGamma gamma(crtc);
+                if (gamma.isNull()) {
+                    continue;
+                }
+                if (gamma->size) {
+                    qCDebug(KWIN_CORE) << "inverting screen using xcb_randr_set_crtc_gamma";
+                    const int half = gamma->size / 2 + 1;
+
+                    uint16_t *red = gamma.red();
+                    uint16_t *green = gamma.green();
+                    uint16_t *blue = gamma.blue();
+                    for (int i = 0; i < half; ++i) {
+                        auto invert = [&gamma, i](uint16_t *ramp) {
+                            qSwap(ramp[i], ramp[gamma->size - 1 - i]);
+                        };
+                        invert(red);
+                        invert(green);
+                        invert(blue);
+                    }
+                    xcb_randr_set_crtc_gamma(connection(), crtc, gamma->size, red, green, blue);
+                    succeeded = true;
+                }
+            }
+        }
+    }
+    if (!succeeded) {
+        Platform::invertScreen();
+    }
 }
 
 }

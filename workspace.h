@@ -32,6 +32,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <QVector>
 // std
 #include <functional>
+#include <memory>
 
 // TODO: Cleanup the order of things in this .h file
 
@@ -47,6 +48,7 @@ namespace KWin
 
 namespace Xcb
 {
+class Tree;
 class Window;
 }
 
@@ -299,7 +301,6 @@ public:
     SessionInfo* takeSessionInfo(Client*);
 
     // D-Bus interface
-    bool waitForCompositingSetup();
     QString supportInformation() const;
 
     void setCurrentScreen(int new_screen);
@@ -324,8 +325,8 @@ public:
 
     void focusToNull(); // SELI TODO: Public?
 
-    void clientShortcutUpdated(Client* c);
-    bool shortcutAvailable(const QKeySequence &cut, Client* ignore = NULL) const;
+    void clientShortcutUpdated(AbstractClient* c);
+    bool shortcutAvailable(const QKeySequence &cut, AbstractClient* ignore = NULL) const;
     bool globalShortcutsDisabled() const;
     void disableGlobalShortcutsForClient(bool disable);
 
@@ -365,11 +366,27 @@ public:
     void registerEventFilter(X11EventFilter *filter);
     void unregisterEventFilter(X11EventFilter *filter);
 
+    void markXStackingOrderAsDirty();
+
+    void quickTileWindow(QuickTileMode mode);
+
+    enum Direction {
+        DirectionNorth,
+        DirectionEast,
+        DirectionSouth,
+        DirectionWest
+    };
+    void switchWindow(Direction direction);
+
+    ShortcutDialog *shortcutDialog() const {
+        return client_keys_dialog;
+    }
+
 public Q_SLOTS:
     void performWindowOperation(KWin::AbstractClient* c, Options::WindowOperation op);
     // Keybindings
     //void slotSwitchToWindow( int );
-    void slotWindowToDesktop();
+    void slotWindowToDesktop(uint i);
 
     //void slotWindowToListPosition( int );
     void slotSwitchToScreen();
@@ -397,19 +414,6 @@ public Q_SLOTS:
     void slotWindowGrowVertical();
     void slotWindowShrinkHorizontal();
     void slotWindowShrinkVertical();
-    void slotWindowQuickTileLeft();
-    void slotWindowQuickTileRight();
-    void slotWindowQuickTileTop();
-    void slotWindowQuickTileBottom();
-    void slotWindowQuickTileTopLeft();
-    void slotWindowQuickTileTopRight();
-    void slotWindowQuickTileBottomLeft();
-    void slotWindowQuickTileBottomRight();
-
-    void slotSwitchWindowUp();
-    void slotSwitchWindowDown();
-    void slotSwitchWindowRight();
-    void slotSwitchWindowLeft();
 
     void slotIncreaseWindowOpacity();
     void slotLowerWindowOpacity();
@@ -438,8 +442,6 @@ public Q_SLOTS:
 
     void slotSetupWindowShortcut();
     void setupWindowShortcutDone(bool);
-    void slotToggleCompositing();
-    void slotInvertScreen();
 
     void updateClientArea();
 
@@ -481,7 +483,6 @@ Q_SIGNALS:
     void unmanagedAdded(KWin::Unmanaged*);
     void unmanagedRemoved(KWin::Unmanaged*);
     void deletedRemoved(KWin::Deleted*);
-    void propertyNotify(long a);
     void configChanged();
     void reinitializeCompositing();
     void showingDesktopChanged(bool showing);
@@ -497,14 +498,9 @@ private:
     template <typename Slot>
     void initShortcut(const QString &actionName, const QString &description, const QKeySequence &shortcut,
                       Slot slot, const QVariant &data = QVariant());
+    template <typename T, typename Slot>
+    void initShortcut(const QString &actionName, const QString &description, const QKeySequence &shortcut, T *receiver, Slot slot, const QVariant &data = QVariant());
     void setupWindowShortcut(AbstractClient* c);
-    enum Direction {
-        DirectionNorth,
-        DirectionEast,
-        DirectionSouth,
-        DirectionWest
-    };
-    void switchWindow(Direction direction);
     bool switchWindow(AbstractClient *c, Direction direction, QPoint curPos, int desktop);
 
     void propagateClients(bool propagate_new_clients);   // Called only from updateStackingOrder
@@ -546,6 +542,8 @@ private:
     static NET::WindowType txtToWindowType(const char* txt);
     static bool sessionInfoWindowTypeMatch(Client* c, SessionInfo* info);
 
+    void updateXStackingOrder();
+
     AbstractClient* active_client;
     AbstractClient* last_active_client;
     AbstractClient* most_recently_raised; // Used ONLY by raiseOrLowerClient()
@@ -565,8 +563,8 @@ private:
     ToplevelList unconstrained_stacking_order; // Topmost last
     ToplevelList stacking_order; // Topmost last
     bool force_restacking;
-    mutable ToplevelList x_stacking; // From XQueryTree()
-    mutable bool x_stacking_dirty;
+    ToplevelList x_stacking; // From XQueryTree()
+    std::unique_ptr<Xcb::Tree> m_xStackingQueryTree;
     QList<AbstractClient*> should_get_focus; // Last is most recent
     QList<AbstractClient*> attention_chain;
 
@@ -575,6 +573,7 @@ private:
     GroupList groups;
 
     bool was_user_interaction;
+    QScopedPointer<X11EventFilter> m_wasUserInteractionFilter;
     bool session_saving;
     int session_active_client;
     int session_desktop;
@@ -623,6 +622,7 @@ private:
 
     QList<X11EventFilter *> m_eventFilters;
     QList<X11EventFilter *> m_genericEventFilters;
+    QScopedPointer<X11EventFilter> m_movingClientFilter;
 
 private:
     friend bool performTransiencyCheck();
@@ -693,11 +693,6 @@ inline const ToplevelList& Workspace::stackingOrder() const
 {
     // TODO: Q_ASSERT( block_stacking_updates == 0 );
     return stacking_order;
-}
-
-inline void Workspace::setWasUserInteraction()
-{
-    was_user_interaction = true;
 }
 
 inline bool Workspace::wasUserInteraction() const

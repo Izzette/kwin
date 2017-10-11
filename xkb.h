@@ -38,13 +38,22 @@ typedef uint32_t xkb_led_index_t;
 typedef uint32_t xkb_keysym_t;
 typedef uint32_t xkb_layout_index_t;
 
+namespace KWayland
+{
+namespace Server
+{
+    class SeatInterface;
+}
+}
+
 namespace KWin
 {
 
-class KWIN_EXPORT Xkb
+class KWIN_EXPORT Xkb : public QObject
 {
+    Q_OBJECT
 public:
-    Xkb(InputRedirection *input);
+    Xkb(QObject *parent = nullptr);
     ~Xkb();
     void setConfig(KSharedConfigPtr config) {
         m_config = config;
@@ -60,6 +69,8 @@ public:
     }
     QString toString(xkb_keysym_t keysym);
     Qt::Key toQtKey(xkb_keysym_t keysym) const;
+    xkb_keysym_t fromQtKey(Qt::Key key, Qt::KeyboardModifiers mods) const;
+    xkb_keysym_t fromKeyEvent(QKeyEvent *event) const;
     Qt::KeyboardModifiers modifiers() const;
     Qt::KeyboardModifiers modifiersRelevantForGlobalShortcuts() const;
     bool shouldKeyRepeat(quint32 key) const;
@@ -98,6 +109,11 @@ public:
      **/
     void forwardModifiers();
 
+    void setSeat(KWayland::Server::SeatInterface *seat);
+
+Q_SIGNALS:
+    void ledsChanged(const LEDs &leds);
+
 private:
     xkb_keymap *loadKeymapFromConfig();
     xkb_keymap *loadDefaultKeymap();
@@ -106,7 +122,6 @@ private:
     void updateModifiers();
     void updateConsumedModifiers(uint32_t key);
     QString layoutName(xkb_layout_index_t layout) const;
-    InputRedirection *m_input;
     xkb_context *m_context;
     xkb_keymap *m_keymap;
     xkb_state *m_state;
@@ -135,6 +150,8 @@ private:
         xkb_mod_index_t latched = 0;
         xkb_mod_index_t locked = 0;
     } m_modifierState;
+
+    QPointer<KWayland::Server::SeatInterface> m_seat;
 };
 
 inline

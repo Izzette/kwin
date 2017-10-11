@@ -34,6 +34,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "useractions.h"
 #include "cursor.h"
 #include "client.h"
+#include "composite.h"
 #include "input.h"
 #include "workspace.h"
 #include "effects.h"
@@ -980,6 +981,12 @@ void Workspace::closeActivePopup()
 template <typename Slot>
 void Workspace::initShortcut(const QString &actionName, const QString &description, const QKeySequence &shortcut, Slot slot, const QVariant &data)
 {
+    initShortcut(actionName, description, shortcut, this, slot, data);
+}
+
+template <typename T, typename Slot>
+void Workspace::initShortcut(const QString &actionName, const QString &description, const QKeySequence &shortcut, T *receiver, Slot slot, const QVariant &data)
+{
     QAction *a = new QAction(this);
     a->setProperty("componentName", QStringLiteral(KWIN_NAME));
     a->setObjectName(actionName);
@@ -989,7 +996,7 @@ void Workspace::initShortcut(const QString &actionName, const QString &descripti
     }
     KGlobalAccel::self()->setDefaultShortcut(a, QList<QKeySequence>() << shortcut);
     KGlobalAccel::self()->setShortcut(a, QList<QKeySequence>() << shortcut);
-    input()->registerShortcut(shortcut, a, this, slot);
+    input()->registerShortcut(shortcut, a, receiver, slot);
 }
 
 /*!
@@ -1044,7 +1051,7 @@ void Workspace::setupWindowShortcutDone(bool ok)
         active_client->takeFocus();
 }
 
-void Workspace::clientShortcutUpdated(Client* c)
+void Workspace::clientShortcutUpdated(AbstractClient* c)
 {
     QString key = QStringLiteral("_k_session:%1").arg(c->window());
     QAction* action = findChild<QAction*>(key);
@@ -1055,11 +1062,7 @@ void Workspace::clientShortcutUpdated(Client* c)
             action->setProperty("componentName", QStringLiteral(KWIN_NAME));
             action->setObjectName(key);
             action->setText(i18n("Activate Window (%1)", c->caption()));
-            connect(action, &QAction::triggered, c,
-                [c]() {
-                    workspace()->activateClient(c, true);
-                }
-            );
+            connect(action, &QAction::triggered, c, std::bind(&Workspace::activateClient, this, c, true));
         }
 
         // no autoloading, since it's configured explicitly here and is not meant to be reused
@@ -1247,10 +1250,9 @@ static uint senderValue(QObject *sender)
 
 #define USABLE_ACTIVE_CLIENT (active_client && !(active_client->isDesktop() || active_client->isDock()))
 
-void Workspace::slotWindowToDesktop()
+void Workspace::slotWindowToDesktop(uint i)
 {
     if (USABLE_ACTIVE_CLIENT) {
-        const uint i = senderValue(sender());
         if (i < 1)
             return;
 
@@ -1599,12 +1601,12 @@ void Workspace::switchWindow(Direction direction)
 
 bool Workspace::switchWindow(AbstractClient *c, Direction direction, QPoint curPos, int d)
 {
-    Client *switchTo = nullptr;
+    AbstractClient *switchTo = nullptr;
     int bestScore = 0;
 
     ToplevelList clist = stackingOrder();
     for (ToplevelList::Iterator i = clist.begin(); i != clist.end(); ++i) {
-        Client *client = qobject_cast<Client*>(*i);
+        auto client = qobject_cast<AbstractClient*>(*i);
         if (!client) {
             continue;
         }
@@ -1658,38 +1660,6 @@ bool Workspace::switchWindow(AbstractClient *c, Direction direction, QPoint curP
 }
 
 /*!
-  Switches to upper window
- */
-void Workspace::slotSwitchWindowUp()
-{
-    switchWindow(DirectionNorth);
-}
-
-/*!
-  Switches to lower window
- */
-void Workspace::slotSwitchWindowDown()
-{
-    switchWindow(DirectionSouth);
-}
-
-/*!
-  Switches to window on the right
- */
-void Workspace::slotSwitchWindowRight()
-{
-    switchWindow(DirectionEast);
-}
-
-/*!
-  Switches to window on the left
- */
-void Workspace::slotSwitchWindowLeft()
-{
-    switchWindow(DirectionWest);
-}
-
-/*!
   Shows the window operations popup menu for the activeClient()
  */
 void Workspace::slotWindowOperations()
@@ -1740,65 +1710,21 @@ void Workspace::slotWindowResize()
         performWindowOperation(active_client, Options::UnrestrictedResizeOp);
 }
 
-void Workspace::slotInvertScreen()
-{
-    using namespace Xcb::RandR;
-    bool succeeded = false;
-
-    if (Xcb::Extensions::self()->isRandrAvailable()) {
-        ScreenResources res((active_client && active_client->window() != XCB_WINDOW_NONE) ? active_client->window() : rootWindow());
-
-        if (!res.isNull()) {
-            for (int j = 0; j < res->num_crtcs; ++j) {
-                auto crtc = res.crtcs()[j];
-                CrtcGamma gamma(crtc);
-                if (gamma.isNull()) {
-                    continue;
-                }
-                if (gamma->size) {
-                    qCDebug(KWIN_CORE) << "inverting screen using xcb_randr_set_crtc_gamma";
-                    const int half = gamma->size / 2 + 1;
-
-                    uint16_t *red = gamma.red();
-                    uint16_t *green = gamma.green();
-                    uint16_t *blue = gamma.blue();
-                    for (int i = 0; i < half; ++i) {
-                        auto invert = [&gamma, i](uint16_t *ramp) {
-                            qSwap(ramp[i], ramp[gamma->size - 1 - i]);
-                        };
-                        invert(red);
-                        invert(green);
-                        invert(blue);
-                    }
-                    xcb_randr_set_crtc_gamma(connection(), crtc, gamma->size, red, green, blue);
-                    succeeded = true;
-                }
-            }
-        }
-    }
-    if (succeeded)
-        return;
-
-    //BEGIN effect plugin inversion - atm only works with OpenGL and has an overhead to it
-    if (effects) {
-        if (Effect *inverter = static_cast<EffectsHandlerImpl*>(effects)->provides(Effect::ScreenInversion)) {
-            qCDebug(KWIN_CORE) << "inverting screen using Effect plugin";
-            QMetaObject::invokeMethod(inverter, "toggleScreenInversion", Qt::DirectConnection);
-        }
-    }
-
-    if (!succeeded)
-        qCDebug(KWIN_CORE) << "sorry - neither Xrandr, nor XF86VidModeSetGammaRamp worked and there's no inversion supplying effect plugin either";
-
-}
-
 #undef USABLE_ACTIVE_CLIENT
 
-void Client::setShortcut(const QString& _cut)
+void AbstractClient::setShortcut(const QString& _cut)
 {
     QString cut = rules()->checkShortcut(_cut);
-    if (cut.isEmpty())
-        return setShortcutInternal();
+    auto updateShortcut  = [this](const QKeySequence &cut = QKeySequence()) {
+        if (_shortcut == cut)
+            return;
+        _shortcut = cut;
+        setShortcutInternal();
+    };
+    if (cut.isEmpty()) {
+        updateShortcut();
+        return;
+    }
     if (cut == shortcut().toString()) {
         return; // no change
     }
@@ -1807,9 +1733,9 @@ void Client::setShortcut(const QString& _cut)
 // E.g. Alt+Ctrl+(ABCDEF);Meta+X,Meta+(ABCDEF)
     if (!cut.contains(QLatin1Char('(')) && !cut.contains(QLatin1Char(')')) && !cut.contains(QLatin1String(" - "))) {
         if (workspace()->shortcutAvailable(cut, this))
-            setShortcutInternal(QKeySequence(cut));
+            updateShortcut(QKeySequence(cut));
         else
-            setShortcutInternal();
+            updateShortcut();
         return;
     }
     QList< QKeySequence > keys;
@@ -1846,18 +1772,21 @@ void Client::setShortcut(const QString& _cut)
             it != keys.constEnd();
             ++it) {
         if (workspace()->shortcutAvailable(*it, this)) {
-            setShortcutInternal(*it);
+            updateShortcut(*it);
             return;
         }
     }
-    setShortcutInternal();
+    updateShortcut();
 }
 
-void Client::setShortcutInternal(const QKeySequence &cut)
+void AbstractClient::setShortcutInternal()
 {
-    if (_shortcut == cut)
-        return;
-    _shortcut = cut;
+    updateCaption();
+    workspace()->clientShortcutUpdated(this);
+}
+
+void Client::setShortcutInternal()
+{
     updateCaption();
 #if 0
     workspace()->clientShortcutUpdated(this);
@@ -1865,16 +1794,11 @@ void Client::setShortcutInternal(const QKeySequence &cut)
     // Workaround for kwin<->kglobalaccel deadlock, when KWin has X grab and the kded
     // kglobalaccel module tries to create the key grab. KWin should preferably grab
     // they keys itself anyway :(.
-    QTimer::singleShot(0, this, SLOT(delayedSetShortcut()));
+    QTimer::singleShot(0, this, std::bind(&Workspace::clientShortcutUpdated, workspace(), this));
 #endif
 }
 
-void Client::delayedSetShortcut()
-{
-    workspace()->clientShortcutUpdated(this);
-}
-
-bool Workspace::shortcutAvailable(const QKeySequence &cut, Client* ignore) const
+bool Workspace::shortcutAvailable(const QKeySequence &cut, AbstractClient* ignore) const
 {
     if (ignore && cut == ignore->shortcut())
         return true;
@@ -1882,8 +1806,8 @@ bool Workspace::shortcutAvailable(const QKeySequence &cut, Client* ignore) const
     if (!KGlobalAccel::getGlobalShortcutsByKey(cut).isEmpty()) {
         return false;
     }
-    for (ClientList::ConstIterator it = clients.constBegin();
-            it != clients.constEnd();
+    for (auto it = m_allClients.constBegin();
+            it != m_allClients.constEnd();
             ++it) {
         if ((*it) != ignore && (*it)->shortcut() == cut)
             return false;

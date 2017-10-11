@@ -157,6 +157,33 @@ public:
      **/
     virtual bool animationsSupported() const = 0;
 
+    /**
+     * The render buffer used by an XRender based compositor scene.
+     * Default implementation returns XCB_RENDER_PICTURE_NONE
+     **/
+    virtual xcb_render_picture_t xrenderBufferPicture() const;
+
+    /**
+     * The QPainter used by a QPainter based compositor scene.
+     * Default implementation returns @c nullptr;
+     **/
+    virtual QPainter *scenePainter() const;
+
+    /**
+     * The render buffer used by a QPainter based compositor.
+     * Default implementation returns @c nullptr.
+     **/
+    virtual QImage *qpainterRenderBuffer() const;
+
+    /**
+     * The backend specific extensions (e.g. EGL/GLX extensions).
+     *
+     * Not the OpenGL (ES) extension!
+     *
+     * Default implementation returns empty list
+     **/
+    virtual QVector<QByteArray> openGLPlatformInterfaceExtensions() const;
+
 Q_SIGNALS:
     void frameRendered();
 
@@ -174,6 +201,8 @@ protected:
     // shared implementation, starts painting the screen
     void paintScreen(int *mask, const QRegion &damage, const QRegion &repaint,
                      QRegion *updateRegion, QRegion *validRegion, const QMatrix4x4 &projection = QMatrix4x4(), const QRect &outputGeometry = QRect());
+    // Render cursor texture in case hardware cursor is disabled/non-applicable
+    virtual void paintCursor() = 0;
     friend class EffectsHandlerImpl;
     // called after all effects had their paintScreen() called
     void finalPaintScreen(int mask, QRegion region, ScreenPaintData& data);
@@ -229,6 +258,24 @@ private:
     QHash< Toplevel*, Window* > m_windows;
     // windows in their stacking order
     QVector< Window* > stacking_order;
+};
+
+/**
+ * Factory class to create a Scene. Needs to be implemented by the plugins.
+ **/
+class KWIN_EXPORT SceneFactory : public QObject
+{
+    Q_OBJECT
+public:
+    virtual ~SceneFactory();
+
+    /**
+     * @returns The created Scene, may be @c nullptr.
+     **/
+    virtual Scene *create(QObject *parent = nullptr) const = 0;
+
+protected:
+    explicit SceneFactory(QObject *parent);
 };
 
 // The base class for windows representations in composite backends
@@ -345,7 +392,7 @@ private:
  * This class is intended to be inherited for the needs of the compositor backends which need further mapping from
  * the native pixmap to the respective rendering format.
  */
-class WindowPixmap
+class KWIN_EXPORT WindowPixmap
 {
 public:
     virtual ~WindowPixmap();
@@ -628,5 +675,7 @@ const QSize &WindowPixmap::size() const
 }
 
 } // namespace
+
+Q_DECLARE_INTERFACE(KWin::SceneFactory, "org.kde.kwin.Scene")
 
 #endif

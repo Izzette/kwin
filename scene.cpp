@@ -399,6 +399,10 @@ void Scene::windowAdded(Toplevel *c)
     m_windows[ c ] = w;
     connect(c, SIGNAL(geometryShapeChanged(KWin::Toplevel*,QRect)), SLOT(windowGeometryShapeChanged(KWin::Toplevel*)));
     connect(c, SIGNAL(windowClosed(KWin::Toplevel*,KWin::Deleted*)), SLOT(windowClosed(KWin::Toplevel*,KWin::Deleted*)));
+    //A change of scale won't affect the geometry in compositor co-ordinates, but will affect the window quads.
+    if (c->surface()) {
+        connect(c->surface(), &KWayland::Server::SurfaceInterface::scaleChanged, this, std::bind(&Scene::windowGeometryShapeChanged, this, c));
+    }
     c->effectWindow()->setSceneWindow(w);
     c->getShadow();
     w->updateShadow(c->shadow());
@@ -650,6 +654,26 @@ void Scene::triggerFence()
 QMatrix4x4 Scene::screenProjectionMatrix() const
 {
     return QMatrix4x4();
+}
+
+xcb_render_picture_t Scene::xrenderBufferPicture() const
+{
+    return XCB_RENDER_PICTURE_NONE;
+}
+
+QPainter *Scene::scenePainter() const
+{
+    return nullptr;
+}
+
+QImage *Scene::qpainterRenderBuffer() const
+{
+    return nullptr;
+}
+
+QVector<QByteArray> Scene::openGLPlatformInterfaceExtensions() const
+{
+    return QVector<QByteArray>{};
 }
 
 //****************************************
@@ -1107,6 +1131,15 @@ Scene::EffectFrame::EffectFrame(EffectFrameImpl* frame)
 }
 
 Scene::EffectFrame::~EffectFrame()
+{
+}
+
+SceneFactory::SceneFactory(QObject *parent)
+    : QObject(parent)
+{
+}
+
+SceneFactory::~SceneFactory()
 {
 }
 

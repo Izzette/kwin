@@ -24,7 +24,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "composite.h"
 #include "cursor.h"
 #include "options.h"
-#include "scene.h"
+#include "platform.h"
 #include "workspace.h"
 
 #include <KDecoration2/DecoratedClient>
@@ -254,25 +254,25 @@ bool DecoratedClientImpl::isMaximizedHorizontally() const
 Qt::Edges DecoratedClientImpl::adjacentScreenEdges() const
 {
     Qt::Edges edges;
-    const AbstractClient::QuickTileMode mode = m_client->quickTileMode();
-    if (mode.testFlag(AbstractClient::QuickTileLeft)) {
+    const QuickTileMode mode = m_client->quickTileMode();
+    if (mode.testFlag(QuickTileFlag::Left)) {
         edges |= Qt::LeftEdge;
-        if (!mode.testFlag(AbstractClient::QuickTileTop) && !mode.testFlag(AbstractClient::QuickTileBottom)) {
+        if (!mode.testFlag(QuickTileFlag::Top) && !mode.testFlag(QuickTileFlag::Bottom)) {
             // using complete side
             edges |= Qt::TopEdge | Qt::BottomEdge;
         }
     }
-    if (mode.testFlag(AbstractClient::QuickTileTop)) {
+    if (mode.testFlag(QuickTileFlag::Top)) {
         edges |= Qt::TopEdge;
     }
-    if (mode.testFlag(AbstractClient::QuickTileRight)) {
+    if (mode.testFlag(QuickTileFlag::Right)) {
         edges |= Qt::RightEdge;
-        if (!mode.testFlag(AbstractClient::QuickTileTop) && !mode.testFlag(AbstractClient::QuickTileBottom)) {
+        if (!mode.testFlag(QuickTileFlag::Top) && !mode.testFlag(QuickTileFlag::Bottom)) {
             // using complete side
             edges |= Qt::TopEdge | Qt::BottomEdge;
         }
     }
-    if (mode.testFlag(AbstractClient::QuickTileBottom)) {
+    if (mode.testFlag(QuickTileFlag::Bottom)) {
         edges |= Qt::BottomEdge;
     }
     return edges;
@@ -290,11 +290,7 @@ bool DecoratedClientImpl::isApplicationMenuActive() const
 
 void DecoratedClientImpl::createRenderer()
 {
-    if (Compositor::self()->hasScene()) {
-        m_renderer = Compositor::self()->scene()->createDecorationRenderer(this);
-    } else {
-        m_renderer = new X11Renderer(this);
-    }
+    m_renderer = kwinApp()->platform()->createDecorationRenderer(this);
 }
 
 void DecoratedClientImpl::destroyRenderer()

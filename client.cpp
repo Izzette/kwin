@@ -48,13 +48,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <QFile>
 #include <QMouseEvent>
 #include <QProcess>
-#include <QStandardPaths>
-#include <QScriptEngine>
-#include <QScriptProgram>
-#include <QWhatsThis>
 // XLib
 #include <X11/Xutil.h>
 #include <fixx11h.h>
+#include <xcb/xcb_icccm.h>
 // system
 #include <unistd.h>
 #include <signal.h>
@@ -266,7 +263,6 @@ void Client::releaseWindow(bool on_shutdown)
         disownDataPassedToDeleted();
         del->unrefWindow();
     }
-    checkNonExistentClients();
     deleteClient(this);
     ungrabXServer();
 }
@@ -306,7 +302,6 @@ void Client::destroyClient()
     unblockGeometryUpdates(); // Don't use GeometryUpdatesBlocker, it would now set the geometry
     disownDataPassedToDeleted();
     del->unrefWindow();
-    checkNonExistentClients();
     deleteClient(this);
 }
 
@@ -1183,7 +1178,7 @@ void Client::killProcess(bool ask, xcb_timestamp_t timestamp)
         QString hostname = clientMachine()->isLocal() ? QStringLiteral("localhost") : QString::fromUtf8(clientMachine()->hostName());
         QProcess::startDetached(QStringLiteral(KWIN_KILLER_BIN),
                                 QStringList() << QStringLiteral("--pid") << QString::number(unsigned(pid)) << QStringLiteral("--hostname") << hostname
-                                << QStringLiteral("--windowname") << caption(false /*full*/)
+                                << QStringLiteral("--windowname") << captionNormal()
                                 << QStringLiteral("--applicationname") << QString::fromUtf8(resourceClass())
                                 << QStringLiteral("--wid") << QString::number(window())
                                 << QStringLiteral("--timestamp") << QString::number(timestamp),
@@ -1401,7 +1396,6 @@ void Client::showContextHelp()
 {
     if (info->supportsProtocol(NET::ContextHelpProtocol)) {
         sendClientMessage(window(), atoms->wm_protocols, atoms->net_wm_context_help);
-        QWhatsThis::enterWhatsThisMode(); // SELI TODO: ?
     }
 }
 
@@ -1414,22 +1408,34 @@ void Client::fetchName()
     setCaption(readName());
 }
 
+static inline QString readNameProperty(xcb_window_t w, xcb_atom_t atom)
+{
+    const auto cookie = xcb_icccm_get_text_property_unchecked(connection(), w, atom);
+    xcb_icccm_get_text_property_reply_t reply;
+    if (xcb_icccm_get_wm_name_reply(connection(), cookie, &reply, nullptr)) {
+        QString retVal;
+        if (reply.encoding == atoms->utf8_string) {
+            retVal = QString::fromUtf8(QByteArray(reply.name, reply.name_len));
+        } else if (reply.encoding == XCB_ATOM_STRING) {
+            retVal = QString::fromLocal8Bit(QByteArray(reply.name, reply.name_len));
+        }
+        xcb_icccm_get_text_property_reply_wipe(&reply);
+        return retVal.simplified();
+    }
+    return QString();
+}
+
 QString Client::readName() const
 {
     if (info->name() && info->name()[0] != '\0')
         return QString::fromUtf8(info->name()).simplified();
-    else
-        return KWindowSystem::readNameProperty(window(), XCB_ATOM_WM_NAME).simplified();
+    else {
+        return readNameProperty(window(), XCB_ATOM_WM_NAME);
+    }
 }
 
 // The list is taken from http://www.unicode.org/reports/tr9/ (#154840)
 static const QChar LRM(0x200E);
-static const QChar RLM(0x200F);
-static const QChar LRE(0x202A);
-static const QChar RLE(0x202B);
-static const QChar LRO(0x202D);
-static const QChar RLO(0x202E);
-static const QChar PDF(0x202C);
 
 void Client::setCaption(const QString& _s, bool force)
 {
@@ -1439,32 +1445,12 @@ void Client::setCaption(const QString& _s, bool force)
     for (int i = 0; i < s.length(); ++i)
         if (!s[i].isPrint())
             s[i] = QChar(u' ');
+    const bool changed = (s != cap_normal);
     cap_normal = s;
-    if (options->condensedTitle()) {
-        static QScriptEngine engine;
-        static QScriptProgram stripTitle;
-        static QScriptValue script;
-        if (stripTitle.isNull()) {
-            const QString scriptFile = QStandardPaths::locate(QStandardPaths::GenericDataLocation, QStringLiteral(KWIN_NAME "/stripTitle.js"));
-            if (!scriptFile.isEmpty()) {
-                QFile f(scriptFile);
-                if (f.open(QIODevice::ReadOnly|QIODevice::Text)) {
-                    f.reset();
-                    stripTitle = QScriptProgram(QString::fromLocal8Bit(f.readAll()), QStringLiteral("stripTitle.js"));
-                    f.close();
-                }
-            }
-            if (stripTitle.isNull())
-                stripTitle = QScriptProgram(QStringLiteral("(function(title, wm_name, wm_class){ return title ; })"), QStringLiteral("stripTitle.js"));
-            script = engine.evaluate(stripTitle);
-        }
-        QScriptValueList args;
-        args << _s << QString::fromUtf8(resourceName()) << QString::fromUtf8(resourceClass());
-        s = script.call(QScriptValue(), args).toString();
-    }
-    if (!force && s == cap_deco)
+    if (!force && !changed) {
+        emit captionChanged();
         return;
-    cap_deco = s;
+    }
 
     bool reset_name = force;
     bool was_suffix = (!cap_suffix.isEmpty());
@@ -1474,18 +1460,14 @@ void Client::setCaption(const QString& _s, bool force)
         if (clientMachine()->hostName() != ClientMachine::localhost() && !clientMachine()->isLocal())
             machine_suffix = QLatin1String(" <@") + QString::fromUtf8(clientMachine()->hostName()) + QLatin1Char('>') + LRM;
     }
-    QString shortcut_suffix = !shortcut().isEmpty() ? (QLatin1String(" {") + shortcut().toString() + QLatin1Char('}')) : QString();
+    QString shortcut_suffix = shortcutCaptionSuffix();
     cap_suffix = machine_suffix + shortcut_suffix;
-    auto fetchNameInternalPredicate = [this](const Client *cl) {
-        return (!cl->isSpecialWindow() || cl->isToolbar()) &&
-                cl != this && cl->caption() == caption();
-    };
-    if ((!isSpecialWindow() || isToolbar()) && workspace()->findClient(fetchNameInternalPredicate)) {
+    if ((!isSpecialWindow() || isToolbar()) && findClientWithSameCaption()) {
         int i = 2;
         do {
             cap_suffix = machine_suffix + QLatin1String(" <") + QString::number(i) + QLatin1Char('>') + LRM;
             i++;
-        } while (workspace()->findClient(fetchNameInternalPredicate));
+        } while (findClientWithSameCaption());
         info->setVisibleName(caption().toUtf8().constData());
         reset_name = false;
     }
@@ -1517,7 +1499,7 @@ void Client::fetchIconicName()
     if (info->iconName() && info->iconName()[0] != '\0')
         s = QString::fromUtf8(info->iconName());
     else
-        s = KWindowSystem::readNameProperty(window(), XCB_ATOM_WM_ICON_NAME);
+        s = readNameProperty(window(), XCB_ATOM_WM_ICON_NAME);
     if (s != cap_iconic) {
         bool was_set = !cap_iconic.isEmpty();
         cap_iconic = s;
@@ -1528,22 +1510,6 @@ void Client::fetchIconicName()
                 info->setVisibleIconName("");
         }
     }
-}
-
-/**
- * \reimp
- */
-QString Client::caption(bool full, bool stripped) const
-{
-    QString cap = stripped ? cap_deco : cap_normal;
-    if (full) {
-        cap += cap_suffix;
-        if (unresponsive()) {
-            cap += QLatin1String(" ");
-            cap += i18nc("Application is not responding, appended to window title", "(Not Responding)");
-        }
-    }
-    return cap;
 }
 
 bool Client::tabTo(Client *other, bool behind, bool activate)
@@ -1585,9 +1551,9 @@ bool Client::untab(const QRect &toGeometry, bool clientRemoved)
         setClientShown(!(isMinimized() || isShade()));
         bool keepSize = toGeometry.size() == size();
         bool changedSize = false;
-        if (quickTileMode() != QuickTileNone) {
+        if (quickTileMode() != QuickTileMode(QuickTileFlag::None)) {
             changedSize = true;
-            setQuickTileMode(QuickTileNone); // if we leave a quicktiled group, assume that the user wants to untile
+            setQuickTileMode(QuickTileFlag::None); // if we leave a quicktiled group, assume that the user wants to untile
         }
         if (toGeometry.isValid()) {
             if (maximizeMode() != MaximizeRestore) {
@@ -1733,7 +1699,9 @@ void Client::getIcons()
 
 void Client::getSyncCounter()
 {
-    if (!Xcb::Extensions::self()->isSyncAvailable())
+    // TODO: make sync working on XWayland
+    static const bool isX11 = kwinApp()->operationMode() == Application::OperationModeX11;
+    if (!Xcb::Extensions::self()->isSyncAvailable() || !isX11)
         return;
 
     Xcb::Property syncProp(false, window(), atoms->net_wm_sync_request_counter, XCB_ATOM_CARDINAL, 0, 1);

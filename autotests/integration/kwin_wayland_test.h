@@ -118,17 +118,24 @@ void flushWaylandConnection();
 KWayland::Client::Surface *createSurface(QObject *parent = nullptr);
 enum class ShellSurfaceType {
     WlShell,
-    XdgShellV5
+    XdgShellV5,
+    XdgShellV6
 };
 QObject *createShellSurface(ShellSurfaceType type, KWayland::Client::Surface *surface, QObject *parent = nullptr);
 KWayland::Client::ShellSurface *createShellSurface(KWayland::Client::Surface *surface, QObject *parent = nullptr);
 KWayland::Client::XdgShellSurface *createXdgShellV5Surface(KWayland::Client::Surface *surface, QObject *parent = nullptr);
 
+
 /**
  * Creates a shared memory buffer of @p size in @p color and attaches it to the @p surface.
  * The @p surface gets damaged and committed, thus it's rendered.
  **/
-void render(KWayland::Client::Surface *surface, const QSize &size, const QColor &color, const QImage::Format &format = QImage::Format_ARGB32);
+void render(KWayland::Client::Surface *surface, const QSize &size, const QColor &color, const QImage::Format &format = QImage::Format_ARGB32_Premultiplied);
+
+/**
+ * Creates a shared memory buffer using the supplied image @p img and attaches it to the @p surface
+ */
+void render(KWayland::Client::Surface *surface, const QImage &img);
 
 /**
  * Waits till a new ShellClient is shown and returns the created ShellClient.

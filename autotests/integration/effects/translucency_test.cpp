@@ -23,7 +23,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "effectloader.h"
 #include "cursor.h"
 #include "platform.h"
-#include "scene_qpainter.h"
 #include "shell_client.h"
 #include "wayland_server.h"
 #include "workspace.h"
@@ -172,7 +171,7 @@ void TranslucencyTest::testMoveAfterDesktopChange()
     client->endMoveResize();
     QVERIFY(m_translucencyEffect->isActive());
     QTest::qWait(500);
-    QVERIFY(!m_translucencyEffect->isActive());
+    QTRY_VERIFY(!m_translucencyEffect->isActive());
 
     // and destroy the window again
     xcb_unmap_window(c.data(), w);

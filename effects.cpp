@@ -22,6 +22,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "effects.h"
 
 #include "effectsadaptor.h"
+#include "effects_mouse_interception_x11_filter.h"
 #include "effectloader.h"
 #ifdef KWIN_BUILD_ACTIVITIES
 #include "activities.h"
@@ -32,8 +33,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "group.h"
 #include "osd.h"
 #include "pointer_input.h"
-#include "scene_xrender.h"
-#include "scene_qpainter.h"
 #include "unmanaged.h"
 #ifdef KWIN_BUILD_TABBOX
 #include "tabbox.h"
@@ -44,6 +43,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "screenlockerwatcher.h"
 #include "thumbnailitem.h"
 #include "virtualdesktops.h"
+#include "window_property_notify_x11_filter.h"
 #include "workspace.h"
 #include "kwinglutils.h"
 
@@ -92,7 +92,27 @@ static void deleteWindowProperty(Window win, long int atom)
     if (win == XCB_WINDOW_NONE) {
         return;
     }
-    xcb_delete_property(connection(), win, atom);
+    xcb_delete_property(kwinApp()->x11Connection(), win, atom);
+}
+
+static xcb_atom_t registerSupportProperty(const QByteArray &propertyName)
+{
+    auto c = kwinApp()->x11Connection();
+    if (!c) {
+        return XCB_ATOM_NONE;
+    }
+    // get the atom for the propertyName
+    ScopedCPointer<xcb_intern_atom_reply_t> atomReply(xcb_intern_atom_reply(c,
+        xcb_intern_atom_unchecked(c, false, propertyName.size(), propertyName.constData()),
+        NULL));
+    if (atomReply.isNull()) {
+        return XCB_ATOM_NONE;
+    }
+    // announce property on root window
+    unsigned char dummy = 0;
+    xcb_change_property(c, XCB_PROP_MODE_REPLACE, kwinApp()->x11RootWindow(), atomReply->atom, atomReply->atom, 8, 1, &dummy);
+    // TODO: add to _NET_SUPPORTED
+    return atomReply->atom;
 }
 
 //---------------------
@@ -173,13 +193,6 @@ EffectsHandlerImpl::EffectsHandlerImpl(Compositor *compositor, Scene *scene)
     );
     connect(vds, &VirtualDesktopManager::countChanged, this, &EffectsHandler::numberDesktopsChanged);
     connect(Cursor::self(), &Cursor::mouseChanged, this, &EffectsHandler::mouseChanged);
-    connect(ws, &Workspace::propertyNotify, this,
-        [this](long int atom) {
-            if (!registered_atoms.contains(atom))
-                return;
-            emit propertyNotify(nullptr, atom);
-        }
-    );
     connect(screens(), &Screens::countChanged,    this, &EffectsHandler::numberScreensChanged);
     connect(screens(), &Screens::sizeChanged,     this, &EffectsHandler::virtualScreenSizeChanged);
     connect(screens(), &Screens::geometryChanged, this, &EffectsHandler::virtualScreenGeometryChanged);
@@ -200,6 +213,32 @@ EffectsHandlerImpl::EffectsHandlerImpl(Compositor *compositor, Scene *scene)
 #endif
     connect(ScreenEdges::self(), &ScreenEdges::approaching, this, &EffectsHandler::screenEdgeApproaching);
     connect(ScreenLockerWatcher::self(), &ScreenLockerWatcher::locked, this, &EffectsHandler::screenLockingChanged);
+
+    connect(kwinApp(), &Application::x11ConnectionChanged, this,
+        [this] {
+            registered_atoms.clear();
+            for (auto it = m_propertiesForEffects.keyBegin(); it != m_propertiesForEffects.keyEnd(); it++) {
+                const auto atom = registerSupportProperty(*it);
+                if (atom == XCB_ATOM_NONE) {
+                    continue;
+                }
+                m_compositor->keepSupportProperty(atom);
+                m_managedProperties.insert(*it, atom);
+                registerPropertyType(atom, true);
+            }
+            if (kwinApp()->x11Connection()) {
+                m_x11WindowPropertyNotify = std::make_unique<WindowPropertyNotifyX11Filter>(this);
+            } else {
+                m_x11WindowPropertyNotify.reset();
+            }
+            emit xcbConnectionChanged();
+        }
+    );
+
+    if (kwinApp()->x11Connection()) {
+        m_x11WindowPropertyNotify = std::make_unique<WindowPropertyNotifyX11Filter>(this);
+    }
+
     // connect all clients
     for (Client *c : ws->clientList()) {
         setupClientConnections(c);
@@ -306,7 +345,6 @@ void EffectsHandlerImpl::setupClientConnections(Client* c)
 {
     setupAbstractClientConnections(c);
     connect(c, &Client::paddingChanged,       this, &EffectsHandlerImpl::slotPaddingChanged);
-    connect(c, &Client::propertyNotify,       this, &EffectsHandlerImpl::slotPropertyNotify);
 }
 
 void EffectsHandlerImpl::setupUnmanagedConnections(Unmanaged* u)
@@ -316,7 +354,6 @@ void EffectsHandlerImpl::setupUnmanagedConnections(Unmanaged* u)
     connect(u, &Unmanaged::geometryShapeChanged, this, &EffectsHandlerImpl::slotGeometryShapeChanged);
     connect(u, &Unmanaged::paddingChanged,       this, &EffectsHandlerImpl::slotPaddingChanged);
     connect(u, &Unmanaged::damaged,              this, &EffectsHandlerImpl::slotWindowDamaged);
-    connect(u, &Unmanaged::propertyNotify,       this, &EffectsHandlerImpl::slotPropertyNotify);
 }
 
 void EffectsHandlerImpl::reconfigure()
@@ -655,6 +692,7 @@ void EffectsHandlerImpl::startMouseInterception(Effect *effect, Qt::CursorShape 
     }
     m_mouseInterceptionWindow.map();
     m_mouseInterceptionWindow.raise();
+    m_x11MouseInterception = std::make_unique<EffectsMouseInterceptionX11Filter>(m_mouseInterceptionWindow, this);
     // Raise electric border windows above the input windows
     // so they can still be triggered.
     ScreenEdges::self()->ensureOnTop();
@@ -666,12 +704,13 @@ void EffectsHandlerImpl::stopMouseInterception(Effect *effect)
         return;
     }
     m_grabbedMouseEffects.removeAll(effect);
-    if (kwinApp()->operationMode() != Application::OperationModeX11) {
-        input()->pointer()->removeEffectsOverrideCursor();
-        return;
-    }
     if (m_grabbedMouseEffects.isEmpty()) {
+        if (kwinApp()->operationMode() != Application::OperationModeX11) {
+            input()->pointer()->removeEffectsOverrideCursor();
+            return;
+        }
         m_mouseInterceptionWindow.unmap();
+        m_x11MouseInterception.reset();
         Workspace::self()->stackScreenEdgesUnderOverrideRedirect();
     }
 }
@@ -770,13 +809,6 @@ void EffectsHandlerImpl::desktopResized(const QSize &size)
     emit screenGeometryChanged(size);
 }
 
-void EffectsHandlerImpl::slotPropertyNotify(Toplevel* t, long int atom)
-{
-    if (!registered_atoms.contains(atom))
-        return;
-    emit propertyNotify(t->effectWindow(), atom);
-}
-
 void EffectsHandlerImpl::registerPropertyType(long atom, bool reg)
 {
     if (reg)
@@ -796,24 +828,17 @@ xcb_atom_t EffectsHandlerImpl::announceSupportProperty(const QByteArray &propert
         if (!it.value().contains(effect)) {
             it.value().append(effect);
         }
-        return m_managedProperties.value(propertyName);
+        return m_managedProperties.value(propertyName, XCB_ATOM_NONE);
     }
-    // get the atom for the propertyName
-    ScopedCPointer<xcb_intern_atom_reply_t> atomReply(xcb_intern_atom_reply(connection(),
-        xcb_intern_atom_unchecked(connection(), false, propertyName.size(), propertyName.constData()),
-        NULL));
-    if (atomReply.isNull()) {
-        return XCB_ATOM_NONE;
-    }
-    m_compositor->keepSupportProperty(atomReply->atom);
-    // announce property on root window
-    unsigned char dummy = 0;
-    xcb_change_property(connection(), XCB_PROP_MODE_REPLACE, rootWindow(), atomReply->atom, atomReply->atom, 8, 1, &dummy);
-    // TODO: add to _NET_SUPPORTED
-    m_managedProperties.insert(propertyName, atomReply->atom);
     m_propertiesForEffects.insert(propertyName, QList<Effect*>() << effect);
-    registerPropertyType(atomReply->atom, true);
-    return atomReply->atom;
+    const auto atom = registerSupportProperty(propertyName);
+    if (atom == XCB_ATOM_NONE) {
+        return atom;
+    }
+    m_compositor->keepSupportProperty(atom);
+    m_managedProperties.insert(propertyName, atom);
+    registerPropertyType(atom, true);
+    return atom;
 }
 
 void EffectsHandlerImpl::removeSupportProperty(const QByteArray &propertyName, Effect *effect)
@@ -840,7 +865,10 @@ void EffectsHandlerImpl::removeSupportProperty(const QByteArray &propertyName, E
 
 QByteArray EffectsHandlerImpl::readRootProperty(long atom, long type, int format) const
 {
-    return readWindowProperty(rootWindow(), atom, type, format);
+    if (!kwinApp()->x11Connection()) {
+        return QByteArray();
+    }
+    return readWindowProperty(kwinApp()->x11RootWindow(), atom, type, format);
 }
 
 void EffectsHandlerImpl::activateWindow(EffectWindow* c)
@@ -934,12 +962,12 @@ int EffectsHandlerImpl::desktopGridHeight() const
 
 int EffectsHandlerImpl::workspaceWidth() const
 {
-    return desktopGridWidth() * displayWidth();
+    return desktopGridWidth() * screens()->size().width();
 }
 
 int EffectsHandlerImpl::workspaceHeight() const
 {
-    return desktopGridHeight() * displayHeight();
+    return desktopGridHeight() * screens()->size().height();
 }
 
 int EffectsHandlerImpl::desktopAtCoords(QPoint coords) const
@@ -960,7 +988,8 @@ QPoint EffectsHandlerImpl::desktopCoords(int id) const
     QPoint coords = VirtualDesktopManager::self()->grid().gridCoords(id);
     if (coords.x() == -1)
         return QPoint(-1, -1);
-    return QPoint(coords.x() * displayWidth(), coords.y() * displayHeight());
+    const QSize displaySize = screens()->size();
+    return QPoint(coords.x() * displaySize.width(), coords.y() * displaySize.height());
 }
 
 int EffectsHandlerImpl::desktopAbove(int desktop, bool wrap) const
@@ -1324,20 +1353,12 @@ void EffectsHandlerImpl::unregisterTouchBorder(ElectricBorder border, QAction *a
 
 unsigned long EffectsHandlerImpl::xrenderBufferPicture()
 {
-#ifdef KWIN_HAVE_XRENDER_COMPOSITING
-    if (SceneXrender* s = dynamic_cast< SceneXrender* >(m_scene))
-        return s->bufferPicture();
-#endif
-    return None;
+    return m_scene->xrenderBufferPicture();
 }
 
 QPainter *EffectsHandlerImpl::scenePainter()
 {
-    if (SceneQPainter *s = dynamic_cast<SceneQPainter*>(m_scene)) {
-        return s->painter();
-    } else {
-        return NULL;
-    }
+    return m_scene->scenePainter();
 }
 
 void EffectsHandlerImpl::toggleEffect(const QString& name)
@@ -1717,12 +1738,17 @@ QRect EffectWindowImpl::decorationInnerRect() const
 
 QByteArray EffectWindowImpl::readProperty(long atom, long type, int format) const
 {
+    if (!kwinApp()->x11Connection()) {
+        return QByteArray();
+    }
     return readWindowProperty(window()->window(), atom, type, format);
 }
 
 void EffectWindowImpl::deleteProperty(long int atom) const
 {
-    deleteWindowProperty(window()->window(), atom);
+    if (kwinApp()->x11Connection()) {
+        deleteWindowProperty(window()->window(), atom);
+    }
 }
 
 EffectWindow* EffectWindowImpl::findModal()

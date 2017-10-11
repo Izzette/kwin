@@ -29,8 +29,9 @@ class QOpenGLFramebufferObject;
 namespace KWin
 {
 
-class KWIN_EXPORT AbstractEglBackend : public OpenGLBackend
+class KWIN_EXPORT AbstractEglBackend : public QObject, public OpenGLBackend
 {
+    Q_OBJECT
 public:
     virtual ~AbstractEglBackend();
     bool makeCurrent() override;
@@ -49,17 +50,11 @@ public:
         return m_config;
     }
 
-    static void unbindWaylandDisplay();
-
 protected:
     AbstractEglBackend();
     void setEglDisplay(const EGLDisplay &display);
-    void setSurface(const EGLSurface &surface) {
-        m_surface = surface;
-    }
-    void setConfig(const EGLConfig &config) {
-        m_config = config;
-    }
+    void setSurface(const EGLSurface &surface);
+    void setConfig(const EGLConfig &config);
     void cleanup();
     virtual void cleanupSurfaces();
     bool initEglAPI();
@@ -73,6 +68,8 @@ protected:
     bool createContext();
 
 private:
+    void unbindWaylandDisplay();
+
     EGLDisplay m_display = EGL_NO_DISPLAY;
     EGLSurface m_surface = EGL_NO_SURFACE;
     EGLContext m_context = EGL_NO_CONTEXT;

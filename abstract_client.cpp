@@ -704,6 +704,7 @@ void AbstractClient::setupWindowManagementInterface()
     };
     updateAppId();
     w->setSkipTaskbar(skipTaskbar());
+    w->setPid(pid());
     w->setShadeable(isShadeable());
     w->setShaded(isShade());
     w->setResizable(isResizable());
@@ -1280,7 +1281,7 @@ void AbstractClient::doResizeSync()
 
 void AbstractClient::checkQuickTilingMaximizationZones(int xroot, int yroot)
 {
-    QuickTileMode mode = QuickTileNone;
+    QuickTileMode mode = QuickTileFlag::None;
     bool innerBorder = false;
     for (int i=0; i < screens()->count(); ++i) {
 
@@ -1301,21 +1302,21 @@ void AbstractClient::checkQuickTilingMaximizationZones(int xroot, int yroot)
         QRect area = workspace()->clientArea(MaximizeArea, QPoint(xroot, yroot), desktop());
         if (options->electricBorderTiling()) {
             if (xroot <= area.x() + 20) {
-                mode |= QuickTileLeft;
+                mode |= QuickTileFlag::Left;
                 innerBorder = isInScreen(QPoint(area.x() - 1, yroot));
             } else if (xroot >= area.x() + area.width() - 20) {
-                mode |= QuickTileRight;
+                mode |= QuickTileFlag::Right;
                 innerBorder = isInScreen(QPoint(area.right() + 1, yroot));
             }
         }
 
-        if (mode != QuickTileNone) {
+        if (mode != QuickTileMode(QuickTileFlag::None)) {
             if (yroot <= area.y() + area.height() * options->electricBorderCornerRatio())
-                mode |= QuickTileTop;
+                mode |= QuickTileFlag::Top;
             else if (yroot >= area.y() + area.height() - area.height()  * options->electricBorderCornerRatio())
-                mode |= QuickTileBottom;
+                mode |= QuickTileFlag::Bottom;
         } else if (options->electricBorderMaximize() && yroot <= area.y() + 5 && isMaximizable()) {
-            mode = QuickTileMaximize;
+            mode = QuickTileFlag::Maximize;
             innerBorder = isInScreen(QPoint(xroot, area.y() - 1));
         }
         break; // no point in checking other screens to contain this... "point"...
@@ -1329,12 +1330,12 @@ void AbstractClient::checkQuickTilingMaximizationZones(int xroot, int yroot)
                 m_electricMaximizingDelay->setSingleShot(true);
                 connect(m_electricMaximizingDelay, &QTimer::timeout, [this]() {
                     if (isMove())
-                        setElectricBorderMaximizing(electricBorderMode() != QuickTileNone);
+                        setElectricBorderMaximizing(electricBorderMode() != QuickTileMode(QuickTileFlag::None));
                 });
             }
             m_electricMaximizingDelay->start();
         } else {
-            setElectricBorderMaximizing(mode != QuickTileNone);
+            setElectricBorderMaximizing(mode != QuickTileMode(QuickTileFlag::None));
         }
     }
 }
@@ -1747,6 +1748,32 @@ void AbstractClient::setUnresponsive(bool unresponsive)
         emit unresponsiveChanged(m_unresponsive);
         emit captionChanged();
     }
+}
+
+QString AbstractClient::shortcutCaptionSuffix() const
+{
+    if (shortcut().isEmpty()) {
+        return QString();
+    }
+    return QLatin1String(" {") + shortcut().toString() + QLatin1Char('}');
+}
+
+AbstractClient *AbstractClient::findClientWithSameCaption() const
+{
+    auto fetchNameInternalPredicate = [this](const AbstractClient *cl) {
+        return (!cl->isSpecialWindow() || cl->isToolbar()) && cl != this && cl->captionNormal() == captionNormal() && cl->captionSuffix() == captionSuffix();
+    };
+    return workspace()->findAbstractClient(fetchNameInternalPredicate);
+}
+
+QString AbstractClient::caption() const
+{
+    QString cap = captionNormal() + captionSuffix();
+    if (unresponsive()) {
+        cap += QLatin1String(" ");
+        cap += i18nc("Application is not responding, appended to window title", "(Not Responding)");
+    }
+    return cap;
 }
 
 }
